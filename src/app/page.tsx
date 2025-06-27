@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from 'next/navigation'
+import Header from "@/components/Header";
 
 interface Flight {
   id: string;
@@ -64,6 +65,8 @@ export default function HomePage() {
   const destinations = [...new Set(flights.map((f) => f.destination))];
 
   return (
+    <>
+    <Header />
     <div className="p-6 space-y-6">
       <h1 className="text-2xl font-bold">Search Flights</h1>
 
@@ -140,5 +143,6 @@ export default function HomePage() {
         ))}
       </ul>
     </div>
+    </>
   );
 }

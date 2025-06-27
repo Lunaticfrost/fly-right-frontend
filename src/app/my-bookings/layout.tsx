@@ -2,6 +2,7 @@ import { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
+import Header from '@/components/Header'
 
 export default async function MyBookingsLayout({ children }: { children: ReactNode }) {
   const cookieStore = await cookies()
@@ -24,5 +25,7 @@ export default async function MyBookingsLayout({ children }: { children: ReactNo
     redirect('/auth/login?redirectTo=/my-bookings')
   }
 
-  return <>{children}</>
+  return <>
+    <Header />
+    <main className="container mx-auto px-4 py-8">{children}</main></>
 }

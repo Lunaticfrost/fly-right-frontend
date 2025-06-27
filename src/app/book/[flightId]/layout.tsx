@@ -2,6 +2,7 @@ import { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
+import Header from '@/components/Header'
 
 export default async function BookingLayout({
   children,
@@ -47,5 +48,7 @@ export default async function BookingLayout({
     redirect(`/auth/login?redirectTo=/book/${flightId}`)
   }
 
-  return <>{children}</>
+  return <>
+    <Header />
+    <main className="container mx-auto px-4 py-8">{children}</main></>
 }
