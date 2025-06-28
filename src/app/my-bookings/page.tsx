@@ -64,6 +64,21 @@ export default function MyBookingsPage() {
     });
   };
 
+  // Calculate flight duration in hours and minutes
+  const calculateFlightDuration = (departureTime: string, arrivalTime: string) => {
+    const departure = new Date(departureTime);
+    const arrival = new Date(arrivalTime);
+    const durationMs = arrival.getTime() - departure.getTime();
+    const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
+    const durationMinutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (durationHours > 0) {
+      return `${durationHours}h ${durationMinutes}m`;
+    } else {
+      return `${durationMinutes}m`;
+    }
+  };
+
   if (loading) {
     return (
       <>
@@ -177,6 +192,14 @@ export default function MyBookingsPage() {
                           {formatDate(flight?.arrival_time)}
                         </p>
                       </div>
+                    </div>
+
+                    {/* Flight Duration */}
+                    <div className="flex justify-between items-center">
+                      <span className="text-gray-600">Duration:</span>
+                      <span className="font-medium text-gray-900">
+                        {calculateFlightDuration(flight?.departure_time, flight?.arrival_time)}
+                      </span>
                     </div>
 
                     {/* Passenger Info */}
