@@ -48,7 +48,5 @@ export default async function BookingLayout({
     redirect(`/auth/login?redirectTo=/book/${flightId}`)
   }
 
-  return <>
-    <Header />
-    <main className="container mx-auto px-4 py-8">{children}</main></>
+  return <>{children}</>;
 }
