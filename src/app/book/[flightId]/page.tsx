@@ -673,6 +673,8 @@ export default function BookingPage() {
                         <p className="text-red-600 text-sm mt-1">{validationErrors.payment.cardNumber}</p>
                       )}
                     </div>
+                    {/* <TestCardNumbers /> */}
+                    <span className="text-sm text-gray-500"> Test Card Number: 4532015112830366</span>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
