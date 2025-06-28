@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
@@ -28,7 +28,7 @@ interface ValidationErrors {
   payment?: { cardName?: string; cardNumber?: string; expiry?: string; cvv?: string };
 }
 
-export default function RoundTripBookingPage() {
+function RoundTripBookingContent() {
   const searchParams = useSearchParams();
   const departureFlightId = searchParams.get('departure');
   const returnFlightId = searchParams.get('return');
@@ -852,5 +852,13 @@ export default function RoundTripBookingPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function RoundTripBookingPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <RoundTripBookingContent />
+    </Suspense>
   );
 } 

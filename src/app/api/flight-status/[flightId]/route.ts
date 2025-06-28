@@ -18,9 +18,10 @@ interface Flight {
 
 export async function GET(
   request: NextRequest,
-  context: { params: { flightId: string } }
-){
-  const flightId = context.params.flightId;
+  context: { params: Promise<Record<string, string>> }
+): Promise<Response>{
+  const params = await context.params;
+  const flightId = params.flightId;
 
   console.log('SSE API called for flightId:', flightId);
 

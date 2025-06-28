@@ -1,15 +1,47 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Header from "@/components/Header";
 
-export default function BookingSuccessPage() {
+interface Passenger {
+  name: string;
+  age: number;
+  gender: string;
+}
+
+interface Flight {
+  id: string;
+  airline: string;
+  flight_number: string;
+  origin: string;
+  destination: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  cabin_class: string;
+  available_seats: number;
+  status: string;
+}
+
+interface Booking {
+  id: string;
+  flight_id: string;
+  passengers: Passenger[];
+  cabin_class: string;
+  total_price: number;
+  payment_method: string;
+  payment_status: string;
+  transaction_id: string;
+  paid_at: string;
+}
+
+function BookingSuccessContent() {
   const searchParams = useSearchParams();
   const bookingId = searchParams.get("bookingId");
 
-  const [booking, setBooking] = useState<any>(null);
-  const [flight, setFlight] = useState<any>(null);
+  const [booking, setBooking] = useState<Booking | null>(null);
+  const [flight, setFlight] = useState<Flight | null>(null);
   const [loading, setLoading] = useState(true);
   const [flightStatus, setFlightStatus] = useState('Loading...')
 
@@ -22,6 +54,12 @@ export default function BookingSuccessPage() {
         .select("*")
         .eq("id", bookingId)
         .single();
+
+      if (error) {
+        console.error('Error fetching booking:', error);
+        setLoading(false);
+        return;
+      }
 
       if (bookingData) {
         setBooking(bookingData);
@@ -134,8 +172,6 @@ export default function BookingSuccessPage() {
       </>
     );
   }
-
-  const passenger = booking.passengers?.[0] || {};
 
   return (
     <>
@@ -257,7 +293,7 @@ export default function BookingSuccessPage() {
                       Passenger Information
                     </h3>
                     <div className="space-y-3">
-                      {booking.passengers?.map((passenger: any, index: number) => (
+                      {booking.passengers?.map((passenger: Passenger, index: number) => (
                         <div key={index} className="bg-gray-50 rounded-lg p-4">
                           <h4 className="font-medium text-gray-900 mb-2">
                             Passenger {index + 1}
@@ -394,5 +430,13 @@ export default function BookingSuccessPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function BookingSuccessPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <BookingSuccessContent />
+    </Suspense>
   );
 }

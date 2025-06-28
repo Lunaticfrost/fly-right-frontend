@@ -2,14 +2,13 @@ import { ReactNode } from 'react'
 import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import Header from '@/components/Header'
 
 export default async function BookingLayout({
   children,
   params,
 }: {
   children: ReactNode
-  params: { flightId: string }
+  params: Promise<{ flightId: string }>
 }) {
   const cookieStore = await cookies()
   const supabase = createServerClient(
