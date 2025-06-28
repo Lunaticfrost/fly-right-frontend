@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+import { Notifications } from "@/lib/notifications";
 
 interface Flight {
   id: string;
@@ -265,6 +266,18 @@ export default function BookingPage() {
       }
 
       const bookingId = data?.[0]?.id;
+      
+      // Send booking confirmation email
+      if (bookingId) {
+        try {
+          await Notifications.onBookingCreated(bookingId);
+          console.log('Booking confirmation email sent successfully');
+        } catch (emailError) {
+          console.error('Failed to send booking confirmation email:', emailError);
+          // Don't block the booking process if email fails
+        }
+      }
+
       router.push(`/booking-success?bookingId=${bookingId}`);
     } catch {
       alert("An unexpected error occurred during booking. Please try again.");

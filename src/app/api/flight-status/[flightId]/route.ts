@@ -1,5 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { Notifications } from '@/lib/notifications';
+
+interface Flight {
+  id: string;
+  status?: string;
+  flight_number?: string;
+  airline?: string;
+  origin?: string;
+  destination?: string;
+  departure_time?: string;
+  arrival_time?: string;
+  price?: number;
+  cabin_class?: string;
+  available_seats?: number;
+}
 
 export async function GET(
   request: NextRequest,
@@ -32,7 +47,7 @@ export async function GET(
           controller.enqueue(encoder.encode(`data: Flight not found\n\n`));
         } else {
           // Check if flightStatus field exists, otherwise use a default
-          const status = (flight as any).status || 'Scheduled';
+          const status = (flight as Flight).status || 'Scheduled';
           console.log('Sending initial status:', status, 'Available fields:', Object.keys(flight));
           controller.enqueue(encoder.encode(`data: ${status}\n\n`));
         }
@@ -45,6 +60,8 @@ export async function GET(
       try {
         console.log('Setting up real-time subscription for flight:', flightId);
         
+        let previousStatus = 'Scheduled';
+        
         const subscription = supabase
           .channel(`flight-status-${flightId}`)
           .on(
@@ -55,10 +72,22 @@ export async function GET(
               table: 'flights',
               filter: `id=eq.${flightId}`,
             },
-            (payload) => {
+            async (payload) => {
               console.log('Real-time payload received:', payload);
-              const newStatus = (payload.new as any)?.status || 'Scheduled';
+              const newStatus = (payload.new as Flight)?.status || 'Scheduled';
               console.log('Flight status updated via real-time:', newStatus);
+              
+              // Send email notification if status changed
+              if (newStatus !== previousStatus) {
+                try {
+                  await Notifications.onFlightStatusChanged(flightId, previousStatus, newStatus);
+                  console.log('Flight status change notification sent');
+                } catch (notificationError) {
+                  console.error('Failed to send flight status notification:', notificationError);
+                }
+                previousStatus = newStatus;
+              }
+              
               controller.enqueue(encoder.encode(`data: ${newStatus}\n\n`));
             }
           )
@@ -85,10 +114,19 @@ export async function GET(
               .eq('id', flightId)
               .single();
             
-            if (!error && currentFlight && (currentFlight as any).status !== lastStatus) {
-              console.log('Status changed via polling:', (currentFlight as any).status);
-              lastStatus = (currentFlight as any).status;
-              controller.enqueue(encoder.encode(`data: ${(currentFlight as any).status}\n\n`));
+            if (!error && currentFlight && (currentFlight as Flight).status !== lastStatus) {
+              console.log('Status changed via polling:', (currentFlight as Flight).status);
+              
+              // Send email notification if status changed
+              try {
+                await Notifications.onFlightStatusChanged(flightId, lastStatus, (currentFlight as Flight).status || 'Scheduled');
+                console.log('Flight status change notification sent via polling');
+              } catch (notificationError) {
+                console.error('Failed to send flight status notification:', notificationError);
+              }
+              
+              lastStatus = (currentFlight as Flight).status || 'Scheduled';
+              controller.enqueue(encoder.encode(`data: ${(currentFlight as Flight).status}\n\n`));
             }
           } catch (pollError) {
             console.error('Polling error:', pollError);
