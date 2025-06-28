@@ -30,7 +30,7 @@ interface ValidationErrors {
 
 function RoundTripBookingContent() {
   const searchParams = useSearchParams();
-  const departureFlightId = searchParams.get('departure');
+  const departureFlightId = searchParams.get('departureFlightId') || searchParams.get('departure');
   const returnFlightId = searchParams.get('return');
   const router = useRouter();
 
@@ -49,19 +49,56 @@ function RoundTripBookingContent() {
 
   useEffect(() => {
     const fetchFlightsAndUser = async () => {
-      if (!departureFlightId || !returnFlightId) {
+      if (!departureFlightId) {
         router.push('/');
         return;
       }
 
-      // Fetch both flights
-      const [departureResult, returnResult] = await Promise.all([
-        supabase.from("flights").select("*").eq("id", departureFlightId).single(),
-        supabase.from("flights").select("*").eq("id", returnFlightId).single()
-      ]);
+      // Fetch departure flight
+      const { data: departureData, error: departureError } = await supabase
+        .from("flights")
+        .select("*")
+        .eq("id", departureFlightId)
+        .single();
 
-      if (departureResult.data) setDepartureFlight(departureResult.data);
-      if (returnResult.data) setReturnFlight(returnResult.data);
+      if (departureError || !departureData) {
+        console.error('Error fetching departure flight:', departureError);
+        router.push('/');
+        return;
+      }
+
+      setDepartureFlight(departureData);
+
+      // If return flight ID is provided, fetch it
+      if (returnFlightId) {
+        const { data: returnData, error: returnError } = await supabase
+          .from("flights")
+          .select("*")
+          .eq("id", returnFlightId)
+          .single();
+
+        if (returnError) {
+          console.error('Error fetching return flight:', returnError);
+        } else if (returnData) {
+          setReturnFlight(returnData);
+        }
+      } else {
+        // Find a suitable return flight
+        const { data: returnFlights, error: returnError } = await supabase
+          .from("flights")
+          .select("*")
+          .eq("origin", departureData.destination)
+          .eq("destination", departureData.origin)
+          .gte("departure_time", departureData.arrival_time) // Return flight should be after arrival
+          .order("departure_time", { ascending: true })
+          .limit(1);
+
+        if (returnError) {
+          console.error('Error finding return flight:', returnError);
+        } else if (returnFlights && returnFlights.length > 0) {
+          setReturnFlight(returnFlights[0]);
+        }
+      }
 
       // Fetch logged-in user ID
       const { data: authData } = await supabase.auth.getUser();

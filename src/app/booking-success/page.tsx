@@ -39,6 +39,7 @@ interface Booking {
 function BookingSuccessContent() {
   const searchParams = useSearchParams();
   const bookingId = searchParams.get("bookingId");
+  const isRoundTrip = searchParams.get("roundTrip") === "true";
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [flight, setFlight] = useState<Flight | null>(null);
@@ -184,10 +185,10 @@ function BookingSuccessContent() {
               <span className="text-4xl">🎉</span>
             </div>
             <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              Booking Confirmed!
+              {isRoundTrip ? 'Round Trip' : 'Booking'} Confirmed!
             </h1>
             <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Your flight has been successfully booked. Your e-ticket is ready
+              Your {isRoundTrip ? 'round trip flights have been' : 'flight has been'} successfully booked. Your e-ticket is ready
               below.
             </p>
           </div>
