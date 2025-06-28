@@ -8,6 +8,9 @@ export default function MyBookingsPage() {
   const [bookings, setBookings] = useState<any[]>([]);
   const [flights, setFlights] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [cancelling, setCancelling] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -77,6 +80,81 @@ export default function MyBookingsPage() {
     } else {
       return `${durationMinutes}m`;
     }
+  };
+
+  // Check if booking can be modified (within 24 hours of departure)
+  const canModifyBooking = (departureTime: string) => {
+    const departure = new Date(departureTime);
+    const now = new Date();
+    const timeDiff = departure.getTime() - now.getTime();
+    const hoursDiff = timeDiff / (1000 * 60 * 60);
+    return hoursDiff > 24; // Can modify if more than 24 hours before departure
+  };
+
+  // Check if booking can be cancelled (within 2 hours of departure)
+  const canCancelBooking = (departureTime: string) => {
+    const departure = new Date(departureTime);
+    const now = new Date();
+    const timeDiff = departure.getTime() - now.getTime();
+    const hoursDiff = timeDiff / (1000 * 60 * 60);
+    return hoursDiff > 2; // Can cancel if more than 2 hours before departure
+  };
+
+  // Calculate refund amount based on cancellation time
+  const calculateRefund = (totalPrice: number, departureTime: string) => {
+    const departure = new Date(departureTime);
+    const now = new Date();
+    const timeDiff = departure.getTime() - now.getTime();
+    const hoursDiff = timeDiff / (1000 * 60 * 60);
+    
+    if (hoursDiff > 24) {
+      return totalPrice * 0.9; // 90% refund if more than 24 hours
+    } else if (hoursDiff > 2) {
+      return totalPrice * 0.5; // 50% refund if more than 2 hours
+    } else {
+      return 0; // No refund if less than 2 hours
+    }
+  };
+
+  // Handle booking cancellation
+  const handleCancelBooking = async () => {
+    if (!selectedBooking) return;
+    
+    setCancelling(true);
+    try {
+      const { error } = await supabase
+        .from("bookings")
+        .update({ 
+          status: "cancelled"
+        })
+        .eq("id", selectedBooking.id);
+
+      if (error) {
+        alert(`Failed to cancel booking: ${error.message}`);
+      } else {
+        // Refresh bookings
+        const { data: bookingData } = await supabase
+          .from("bookings")
+          .select("*")
+          .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+          .order("booking_date", { ascending: false });
+        
+        setBookings(bookingData || []);
+        setShowCancelModal(false);
+        setSelectedBooking(null);
+        alert("Booking cancelled successfully!");
+      }
+    } catch (error) {
+      alert("An error occurred while cancelling the booking.");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  // Open cancellation modal
+  const openCancelModal = (booking: any) => {
+    setSelectedBooking(booking);
+    setShowCancelModal(true);
   };
 
   if (loading) {
@@ -259,6 +337,12 @@ export default function MyBookingsPage() {
                           {booking.id}
                         </span>
                       </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Booked On:</span>
+                        <span className="text-sm text-gray-700">
+                          {new Date(booking.booking_date).toLocaleDateString()}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Actions */}
@@ -274,6 +358,54 @@ export default function MyBookingsPage() {
                         View E-Ticket
                       </button>
                     </div>
+
+                    {/* Modify and Cancel Actions */}
+                    {booking.status === "confirmed" && (
+                      <div className="flex space-x-3 mt-3">
+                        {canModifyBooking(flight?.departure_time) ? (
+                          <button
+                            className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                            onClick={() => router.push(`/modify-booking/${booking.id}`)}
+                          >
+                            Modify Booking
+                          </button>
+                        ) : (
+                          <button
+                            className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
+                            disabled
+                            title="Modification not allowed within 24 hours of departure"
+                          >
+                            Modify (24h limit)
+                          </button>
+                        )}
+                        
+                        {canCancelBooking(flight?.departure_time) ? (
+                          <button
+                            className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                            onClick={() => openCancelModal(booking)}
+                          >
+                            Cancel Booking
+                          </button>
+                        ) : (
+                          <button
+                            className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
+                            disabled
+                            title="Cancellation not allowed within 2 hours of departure"
+                          >
+                            Cancel (2h limit)
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Cancelled Booking Notice */}
+                    {booking.status === "cancelled" && (
+                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                        <p className="text-sm text-red-800 font-medium">
+                          ❌ This booking has been cancelled
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -281,6 +413,98 @@ export default function MyBookingsPage() {
           </div>
         </div>
       </div>
+
+      {/* Cancellation Confirmation Modal */}
+      {showCancelModal && selectedBooking && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-16 h-16 bg-red-100 rounded-full mb-4">
+                <span className="text-2xl">⚠️</span>
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 mb-2">
+                Cancel Booking
+              </h3>
+              <p className="text-gray-600">
+                Are you sure you want to cancel this booking? This action cannot be undone.
+              </p>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+              <h4 className="font-semibold text-red-800 mb-2">Booking Details:</h4>
+              <div className="text-sm text-red-700 space-y-1">
+                <p><strong>Flight:</strong> {flights[selectedBooking.flight_id]?.airline} - {flights[selectedBooking.flight_id]?.flight_number}</p>
+                <p><strong>Route:</strong> {flights[selectedBooking.flight_id]?.origin} → {flights[selectedBooking.flight_id]?.destination}</p>
+                <p><strong>Date:</strong> {formatDate(flights[selectedBooking.flight_id]?.departure_time)}</p>
+                <p><strong>Amount:</strong> ₹{selectedBooking.total_price.toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* Refund Information */}
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+              <h4 className="font-semibold text-yellow-800 mb-2">Refund Information:</h4>
+              <div className="text-sm text-yellow-700 space-y-2">
+                {(() => {
+                  const refund = calculateRefund(selectedBooking.total_price, flights[selectedBooking.flight_id]?.departure_time);
+                  const hoursToDeparture = (new Date(flights[selectedBooking.flight_id]?.departure_time).getTime() - new Date().getTime()) / (1000 * 60 * 60);
+                  
+                  if (hoursToDeparture > 24) {
+                    return (
+                      <div>
+                        <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (90% of total)</p>
+                        <p><strong>Processing Time:</strong> 5-7 business days</p>
+                        <p className="text-xs mt-1">✓ More than 24 hours before departure</p>
+                      </div>
+                    );
+                  } else if (hoursToDeparture > 2) {
+                    return (
+                      <div>
+                        <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (50% of total)</p>
+                        <p><strong>Processing Time:</strong> 5-7 business days</p>
+                        <p className="text-xs mt-1">⚠️ Less than 24 hours before departure</p>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div>
+                        <p><strong>Refund Amount:</strong> ₹0 (No refund available)</p>
+                        <p className="text-xs mt-1">❌ Less than 2 hours before departure</p>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200"
+                onClick={() => {
+                  setShowCancelModal(false);
+                  setSelectedBooking(null);
+                }}
+                disabled={cancelling}
+              >
+                Keep Booking
+              </button>
+              <button
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50"
+                onClick={handleCancelBooking}
+                disabled={cancelling}
+              >
+                {cancelling ? (
+                  <span className="flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Cancelling...
+                  </span>
+                ) : (
+                  "Yes, Cancel"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
