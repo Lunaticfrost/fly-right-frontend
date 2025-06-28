@@ -18,9 +18,10 @@ interface Flight {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { flightId: string } }
-) {
-  const flightId = params.flightId;
+  context: { params: { flightId: string } }
+){
+  const flightId = context.params.flightId;
+
   console.log('SSE API called for flightId:', flightId);
 
   // Set up SSE headers
