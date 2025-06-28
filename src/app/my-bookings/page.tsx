@@ -122,29 +122,42 @@ export default function MyBookingsPage() {
     
     setCancelling(true);
     try {
-      const { error } = await supabase
+      console.log("Cancelling booking:", selectedBooking.id);
+      
+      const { data, error } = await supabase
         .from("bookings")
         .update({ 
           status: "cancelled"
         })
-        .eq("id", selectedBooking.id);
+        .eq("id", selectedBooking.id)
+        .select(); // Add select to get the updated data
 
       if (error) {
+        console.error("Cancellation error:", error);
         alert(`Failed to cancel booking: ${error.message}`);
       } else {
+        console.log("Booking cancelled successfully:", data);
+        
         // Refresh bookings
-        const { data: bookingData } = await supabase
+        const { data: bookingData, error: fetchError } = await supabase
           .from("bookings")
           .select("*")
           .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
           .order("booking_date", { ascending: false });
         
-        setBookings(bookingData || []);
+        if (fetchError) {
+          console.error("Error fetching updated bookings:", fetchError);
+        } else {
+          console.log("Updated bookings:", bookingData);
+          setBookings(bookingData || []);
+        }
+        
         setShowCancelModal(false);
         setSelectedBooking(null);
         alert("Booking cancelled successfully!");
       }
     } catch (error) {
+      console.error("Cancellation exception:", error);
       alert("An error occurred while cancelling the booking.");
     } finally {
       setCancelling(false);
@@ -155,6 +168,28 @@ export default function MyBookingsPage() {
   const openCancelModal = (booking: any) => {
     setSelectedBooking(booking);
     setShowCancelModal(true);
+  };
+
+  // Refresh bookings data
+  const refreshBookings = async () => {
+    setLoading(true);
+    try {
+      const { data: bookingData, error } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+        .order("booking_date", { ascending: false });
+
+      if (error) {
+        console.error("Error refreshing bookings:", error);
+      } else {
+        setBookings(bookingData || []);
+      }
+    } catch (error) {
+      console.error("Error refreshing bookings:", error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loading) {
@@ -209,9 +244,16 @@ export default function MyBookingsPage() {
             <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
               My Bookings
             </h1>
-            <p className="text-xl text-gray-600">
+            <p className="text-xl text-gray-600 mb-6">
               Manage and view all your flight reservations
             </p>
+            <button
+              onClick={refreshBookings}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg flex items-center mx-auto space-x-2"
+            >
+              <span>🔄</span>
+              <span>Refresh Bookings</span>
+            </button>
           </div>
 
           {/* Bookings Grid */}
@@ -226,7 +268,11 @@ export default function MyBookingsPage() {
                   className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden"
                 >
                   {/* Booking Header */}
-                  <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6">
+                  <div className={`p-6 ${
+                    booking.status === "cancelled" 
+                      ? "bg-gradient-to-r from-red-500 to-red-600" 
+                      : "bg-gradient-to-r from-green-500 to-green-600"
+                  } text-white`}>
                     <div className="flex justify-between items-start">
                       <div>
                         <h3 className="text-xl font-bold mb-1">
@@ -237,8 +283,12 @@ export default function MyBookingsPage() {
                         </p>
                       </div>
                       <div className="text-right">
-                        <div className="bg-white/20 rounded-full px-3 py-1 text-sm font-medium">
-                          {booking.status}
+                        <div className={`rounded-full px-3 py-1 text-sm font-medium ${
+                          booking.status === "cancelled"
+                            ? "bg-red-700 text-white"
+                            : "bg-white/20 text-white"
+                        }`}>
+                          {booking.status === "cancelled" ? "❌ Cancelled" : "✅ Confirmed"}
                         </div>
                       </div>
                     </div>

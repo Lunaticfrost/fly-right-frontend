@@ -4,10 +4,20 @@ import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
 
-interface Passenger {
-  name: string;
-  age: string;
-  gender: string;
+interface Booking {
+  id: string;
+  user_id: string;
+  flight_id: string;
+  passengers: Passenger[];
+  cabin_class: string;
+  total_price: number;
+  trip_type: string;
+  status: string;
+  payment_method: string;
+  payment_status: string;
+  transaction_id: string;
+  paid_at: string;
+  created_at: string;
 }
 
 interface Flight {
@@ -23,18 +33,31 @@ interface Flight {
   available_seats?: number;
 }
 
+interface Passenger {
+  name: string;
+  age: string;
+  gender: string;
+}
+
+interface ValidationErrors {
+  passengers?: { [key: number]: { name?: string; age?: string; gender?: string } };
+}
+
 export default function ModifyBookingPage() {
   const params = useParams();
   const bookingId = params.bookingId as string;
   const router = useRouter();
 
-  const [booking, setBooking] = useState<any>(null);
+  const [booking, setBooking] = useState<Booking | null>(null);
   const [flight, setFlight] = useState<Flight | null>(null);
   const [availableFlights, setAvailableFlights] = useState<Flight[]>([]);
+  const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
+  const [passengers, setPassengers] = useState<Passenger[]>([
+    { name: "", age: "", gender: "" }
+  ]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [passengers, setPassengers] = useState<Passenger[]>([]);
-  const [selectedFlight, setSelectedFlight] = useState<Flight | null>(null);
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
 
   useEffect(() => {
     const fetchBookingAndFlight = async () => {
@@ -78,7 +101,64 @@ export default function ModifyBookingPage() {
     fetchBookingAndFlight();
   }, [bookingId]);
 
+  const validatePassenger = (passenger: Passenger) => {
+    const errors: { name?: string; age?: string; gender?: string } = {};
+    
+    // Name validation
+    if (!passenger.name.trim()) {
+      errors.name = "Full name is required";
+    } else if (passenger.name.trim().length < 2) {
+      errors.name = "Name must be at least 2 characters long";
+    } else if (passenger.name.trim().length > 50) {
+      errors.name = "Name must be less than 50 characters";
+    } else {
+      const nameRegex = /^[a-zA-Z\s]+$/;
+      if (!nameRegex.test(passenger.name.trim())) {
+        errors.name = "Name can only contain letters and spaces";
+      }
+    }
+    
+    // Age validation
+    if (!passenger.age) {
+      errors.age = "Age is required";
+    } else {
+      const ageNum = parseInt(passenger.age);
+      if (isNaN(ageNum) || ageNum < 1 || ageNum > 120) {
+        errors.age = "Age must be between 1 and 120";
+      }
+    }
+    
+    // Gender validation
+    if (!passenger.gender) {
+      errors.gender = "Gender is required";
+    } else if (!["Male", "Female", "Other"].includes(passenger.gender)) {
+      errors.gender = "Please select a valid gender";
+    }
+    
+    return errors;
+  };
+
+  const validatePassengerForm = (): boolean => {
+    const passengerErrors: { [key: number]: { name?: string; age?: string; gender?: string } } = {};
+    let hasErrors = false;
+    
+    passengers.forEach((passenger, index) => {
+      const errors = validatePassenger(passenger);
+      if (Object.keys(errors).length > 0) {
+        passengerErrors[index] = errors;
+        hasErrors = true;
+      }
+    });
+    
+    setValidationErrors(prev => ({ ...prev, passengers: passengerErrors }));
+    return !hasErrors;
+  };
+
   const handleSaveChanges = async () => {
+    if (!validatePassengerForm()) {
+      return;
+    }
+
     if (!selectedFlight) return;
 
     setSaving(true);
@@ -100,8 +180,8 @@ export default function ModifyBookingPage() {
         alert("Booking modified successfully!");
         router.push("/my-bookings");
       }
-    } catch (error) {
-      alert("An error occurred while modifying the booking.");
+    } catch {
+      alert("An unexpected error occurred while modifying the booking.");
     } finally {
       setSaving(false);
     }
@@ -115,6 +195,15 @@ export default function ModifyBookingPage() {
     if (passengers.length > 1) {
       const newPassengers = passengers.filter((_, i) => i !== index);
       setPassengers(newPassengers);
+      // Clear validation errors for removed passenger
+      if (validationErrors.passengers?.[index]) {
+        const newPassengerErrors = { ...validationErrors.passengers };
+        delete newPassengerErrors[index];
+        setValidationErrors(prev => ({ 
+          ...prev, 
+          passengers: newPassengerErrors 
+        }));
+      }
     }
   };
 
@@ -122,6 +211,21 @@ export default function ModifyBookingPage() {
     const newPassengers = [...passengers];
     newPassengers[index] = { ...newPassengers[index], [field]: value };
     setPassengers(newPassengers);
+    
+    // Clear validation error for this field if it exists
+    if (validationErrors.passengers?.[index]?.[field]) {
+      const newPassengerErrors = { ...validationErrors.passengers };
+      if (newPassengerErrors[index]) {
+        delete newPassengerErrors[index][field];
+        if (Object.keys(newPassengerErrors[index]).length === 0) {
+          delete newPassengerErrors[index];
+        }
+      }
+      setValidationErrors(prev => ({ 
+        ...prev, 
+        passengers: newPassengerErrors 
+      }));
+    }
   };
 
   const isFormValid = () => {
@@ -168,8 +272,8 @@ export default function ModifyBookingPage() {
         <Header />
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Loading booking details...</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading booking details...</p>
           </div>
         </div>
       </>
@@ -181,14 +285,9 @@ export default function ModifyBookingPage() {
       <>
         <Header />
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
-          <div className="text-center bg-white rounded-2xl shadow-xl p-12">
-            <div className="text-6xl mb-6">❌</div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">
-              Booking Not Found
-            </h1>
-            <p className="text-gray-600 mb-8">
-              The booking you're looking for doesn't exist.
-            </p>
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">Booking Not Found</h1>
+            <p className="text-gray-600 mb-6">The booking you&apos;re looking for doesn&apos;t exist.</p>
             <button
               onClick={() => router.push("/my-bookings")}
               className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
@@ -433,13 +532,28 @@ export default function ModifyBookingPage() {
                             Full Name *
                           </label>
                           <input
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                              validationErrors.passengers?.[index]?.name ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                            }`}
                             placeholder="Enter full name"
                             value={passenger.name}
                             onChange={(e) =>
                               updatePassenger(index, "name", e.target.value)
                             }
+                            onBlur={() => {
+                              const errors = validatePassenger(passenger);
+                              setValidationErrors(prev => ({
+                                ...prev,
+                                passengers: {
+                                  ...prev.passengers,
+                                  [index]: { ...prev.passengers?.[index], name: errors.name }
+                                }
+                              }));
+                            }}
                           />
+                          {validationErrors.passengers?.[index]?.name && (
+                            <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].name}</p>
+                          )}
                         </div>
 
                         <div>
@@ -447,7 +561,9 @@ export default function ModifyBookingPage() {
                             Age *
                           </label>
                           <input
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                              validationErrors.passengers?.[index]?.age ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                            }`}
                             placeholder="Age"
                             type="number"
                             min="1"
@@ -456,7 +572,20 @@ export default function ModifyBookingPage() {
                             onChange={(e) =>
                               updatePassenger(index, "age", e.target.value)
                             }
+                            onBlur={() => {
+                              const errors = validatePassenger(passenger);
+                              setValidationErrors(prev => ({
+                                ...prev,
+                                passengers: {
+                                  ...prev.passengers,
+                                  [index]: { ...prev.passengers?.[index], age: errors.age }
+                                }
+                              }));
+                            }}
                           />
+                          {validationErrors.passengers?.[index]?.age && (
+                            <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].age}</p>
+                          )}
                         </div>
 
                         <div>
@@ -464,17 +593,32 @@ export default function ModifyBookingPage() {
                             Gender *
                           </label>
                           <select
-                            className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                            className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                              validationErrors.passengers?.[index]?.gender ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                            }`}
                             value={passenger.gender}
                             onChange={(e) =>
                               updatePassenger(index, "gender", e.target.value)
                             }
+                            onBlur={() => {
+                              const errors = validatePassenger(passenger);
+                              setValidationErrors(prev => ({
+                                ...prev,
+                                passengers: {
+                                  ...prev.passengers,
+                                  [index]: { ...prev.passengers?.[index], gender: errors.gender }
+                                }
+                              }));
+                            }}
                           >
                             <option value="">Select Gender</option>
                             <option value="Male">Male</option>
                             <option value="Female">Female</option>
                             <option value="Other">Other</option>
                           </select>
+                          {validationErrors.passengers?.[index]?.gender && (
+                            <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].gender}</p>
+                          )}
                         </div>
                       </div>
                     </div>

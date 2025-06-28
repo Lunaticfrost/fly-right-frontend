@@ -11,6 +11,7 @@ export default function BookingSuccessPage() {
   const [booking, setBooking] = useState<any>(null);
   const [flight, setFlight] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [flightStatus, setFlightStatus] = useState('Loading...')
 
   useEffect(() => {
     const fetchBooking = async () => {
@@ -40,6 +41,34 @@ export default function BookingSuccessPage() {
 
     fetchBooking();
   }, [bookingId]);
+
+  useEffect(() => {
+    if (!booking?.flight_id) return
+  
+    const eventSource = new EventSource(`/api/flight-status/${booking.flight_id}`)
+    console.log("Connecting to SSE for flight:", booking.flight_id)
+  
+    eventSource.onmessage = (event) => {
+      console.log("SSE message received:", event.data)
+      if (event.data !== 'ping') {
+        setFlightStatus(event.data)
+      }
+    }
+
+    eventSource.onerror = (error) => {
+      console.error("SSE connection error:", error)
+      setFlightStatus('Connection Error')
+    }
+
+    eventSource.onopen = () => {
+      console.log("SSE connection opened")
+    }
+  
+    return () => {
+      console.log("Closing SSE connection")
+      eventSource.close()
+    }
+  }, [booking])
 
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString("en-US", {
@@ -161,6 +190,17 @@ export default function BookingSuccessPage() {
                         </h4>
                         <span className="bg-blue-100 text-blue-800 text-xs font-medium px-2 py-1 rounded-full">
                           {booking.cabin_class}
+                        </span>
+                        <span className={`text-xs font-medium px-2 py-1 rounded-full ${
+                          flightStatus === 'Delayed' || flightStatus === 'Cancelled'
+                            ? 'bg-red-100 text-red-800'
+                            : flightStatus === 'Boarding' || flightStatus === 'Departed'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : flightStatus === 'On Time' || flightStatus === 'Scheduled'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}>
+                          {flightStatus}
                         </span>
                       </div>
 

@@ -1,8 +1,21 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+
+interface Flight {
+  id: string;
+  flight_number: string;
+  airline: string;
+  origin: string;
+  destination: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  cabin_class: string;
+  available_seats?: number;
+}
 
 interface Passenger {
   name: string;
@@ -10,12 +23,17 @@ interface Passenger {
   gender: string;
 }
 
+interface ValidationErrors {
+  passengers?: { [key: number]: { name?: string; age?: string; gender?: string } };
+  payment?: { cardName?: string; cardNumber?: string; expiry?: string; cvv?: string };
+}
+
 export default function BookingPage() {
   const params = useParams();
   const flightId = params.flightId as string;
   const router = useRouter();
 
-  const [flight, setFlight] = useState<any>(null);
+  const [flight, setFlight] = useState<Flight | null>(null);
   const [loading, setLoading] = useState(true);
   const [passengers, setPassengers] = useState<Passenger[]>([
     { name: "", age: "", gender: "" }
@@ -25,6 +43,7 @@ export default function BookingPage() {
   const [cardNumber, setCardNumber] = useState("");
   const [expiry, setExpiry] = useState("");
   const [cvv, setCvv] = useState("");
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
 
   useEffect(() => {
     const fetchFlightAndUser = async () => {
@@ -57,7 +76,138 @@ export default function BookingPage() {
     fetchFlightAndUser();
   }, [flightId]);
 
+  const validatePassenger = (passenger: Passenger) => {
+    const errors: { name?: string; age?: string; gender?: string } = {};
+    
+    // Name validation
+    if (!passenger.name.trim()) {
+      errors.name = "Full name is required";
+    } else if (passenger.name.trim().length < 2) {
+      errors.name = "Name must be at least 2 characters long";
+    } else if (passenger.name.trim().length > 50) {
+      errors.name = "Name must be less than 50 characters";
+    } else {
+      const nameRegex = /^[a-zA-Z\s]+$/;
+      if (!nameRegex.test(passenger.name.trim())) {
+        errors.name = "Name can only contain letters and spaces";
+      }
+    }
+    
+    // Age validation
+    if (!passenger.age) {
+      errors.age = "Age is required";
+    } else {
+      const ageNum = parseInt(passenger.age);
+      if (isNaN(ageNum) || ageNum < 1 || ageNum > 120) {
+        errors.age = "Age must be between 1 and 120";
+      }
+    }
+    
+    // Gender validation
+    if (!passenger.gender) {
+      errors.gender = "Gender is required";
+    } else if (!["Male", "Female", "Other"].includes(passenger.gender)) {
+      errors.gender = "Please select a valid gender";
+    }
+    
+    return errors;
+  };
+
+  const validatePayment = () => {
+    const errors: { cardName?: string; cardNumber?: string; expiry?: string; cvv?: string } = {};
+    
+    // Card name validation
+    if (!cardName.trim()) {
+      errors.cardName = "Cardholder name is required";
+    } else if (cardName.trim().length < 2) {
+      errors.cardName = "Cardholder name must be at least 2 characters long";
+    } else {
+      const nameRegex = /^[a-zA-Z\s]+$/;
+      if (!nameRegex.test(cardName.trim())) {
+        errors.cardName = "Cardholder name can only contain letters and spaces";
+      }
+    }
+    
+    // Card number validation
+    const cleanCardNumber = cardNumber.replace(/\s/g, "");
+    if (!cleanCardNumber) {
+      errors.cardNumber = "Card number is required";
+    } else if (!/^\d{13,19}$/.test(cleanCardNumber)) {
+      errors.cardNumber = "Card number must be 13-19 digits";
+    } else if (!luhnCheck(cleanCardNumber)) {
+      errors.cardNumber = "Invalid card number";
+    }
+    
+    // Expiry validation
+    if (!expiry) {
+      errors.expiry = "Expiry date is required";
+    } else {
+      const expiryRegex = /^(0[1-9]|1[0-2])\/([0-9]{2})$/;
+      if (!expiryRegex.test(expiry)) {
+        errors.expiry = "Please use MM/YY format";
+      } else {
+        const [month, year] = expiry.split("/");
+        const currentDate = new Date();
+        const currentYear = currentDate.getFullYear() % 100;
+        const currentMonth = currentDate.getMonth() + 1;
+        
+        if (parseInt(year) < currentYear || 
+            (parseInt(year) === currentYear && parseInt(month) < currentMonth)) {
+          errors.expiry = "Card has expired";
+        }
+      }
+    }
+    
+    // CVV validation
+    if (!cvv) {
+      errors.cvv = "CVV is required";
+    } else if (!/^\d{3,4}$/.test(cvv)) {
+      errors.cvv = "CVV must be 3-4 digits";
+    }
+    
+    return errors;
+  };
+
+  // Luhn algorithm for card number validation
+  const luhnCheck = (num: string): boolean => {
+    const arr = (num + '')
+      .split('')
+      .reverse()
+      .map(x => parseInt(x));
+    const lastDigit = arr.splice(0, 1)[0];
+    const sum = arr.reduce((acc, val, i) => (i % 2 !== 0 ? acc + val : acc + ((val * 2) % 9) || 9), 0);
+    return (sum + lastDigit) % 10 === 0;
+  };
+
+  const validatePassengerForm = (): boolean => {
+    const passengerErrors: { [key: number]: { name?: string; age?: string; gender?: string } } = {};
+    let hasErrors = false;
+    
+    passengers.forEach((passenger, index) => {
+      const errors = validatePassenger(passenger);
+      if (Object.keys(errors).length > 0) {
+        passengerErrors[index] = errors;
+        hasErrors = true;
+      }
+    });
+    
+    setValidationErrors(prev => ({ ...prev, passengers: passengerErrors }));
+    return !hasErrors;
+  };
+
+  const validatePaymentForm = (): boolean => {
+    const paymentErrors = validatePayment();
+    const hasErrors = Object.keys(paymentErrors).length > 0;
+    
+    setValidationErrors(prev => ({ ...prev, payment: paymentErrors }));
+    return !hasErrors;
+  };
+
   const handleBooking = async () => {
+    if (!validatePaymentForm()) {
+      return;
+    }
+
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) {
       alert("Not logged in.");
@@ -65,13 +215,13 @@ export default function BookingPage() {
     }
 
     // Calculate total price based on number of passengers
-    const totalPrice = flight.price * passengers.length;
+    const totalPrice = flight!.price * passengers.length;
 
     const booking = {
       user_id: user.id,
       flight_id: flightId,
       passengers: passengers,
-      cabin_class: flight.cabin_class,
+      cabin_class: flight!.cabin_class,
       total_price: totalPrice,
       trip_type: "one-way",
       status: "confirmed",
@@ -102,6 +252,15 @@ export default function BookingPage() {
     if (passengers.length > 1) {
       const newPassengers = passengers.filter((_, i) => i !== index);
       setPassengers(newPassengers);
+      // Clear validation errors for removed passenger
+      if (validationErrors.passengers?.[index]) {
+        const newPassengerErrors = { ...validationErrors.passengers };
+        delete newPassengerErrors[index];
+        setValidationErrors(prev => ({ 
+          ...prev, 
+          passengers: newPassengerErrors 
+        }));
+      }
     }
   };
 
@@ -109,6 +268,21 @@ export default function BookingPage() {
     const newPassengers = [...passengers];
     newPassengers[index] = { ...newPassengers[index], [field]: value };
     setPassengers(newPassengers);
+    
+    // Clear validation error for this field if it exists
+    if (validationErrors.passengers?.[index]?.[field]) {
+      const newPassengerErrors = { ...validationErrors.passengers };
+      if (newPassengerErrors[index]) {
+        delete newPassengerErrors[index][field];
+        if (Object.keys(newPassengerErrors[index]).length === 0) {
+          delete newPassengerErrors[index];
+        }
+      }
+      setValidationErrors(prev => ({ 
+        ...prev, 
+        passengers: newPassengerErrors 
+      }));
+    }
   };
 
   const isPassengerFormValid = () => {
@@ -135,7 +309,6 @@ export default function BookingPage() {
     });
   };
 
-  // Calculate flight duration in hours and minutes
   const calculateFlightDuration = (departureTime: string, arrivalTime: string) => {
     const departure = new Date(departureTime);
     const arrival = new Date(arrivalTime);
@@ -156,8 +329,8 @@ export default function BookingPage() {
         <Header />
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Loading flight details...</p>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading flight details...</p>
           </div>
         </div>
       </>
@@ -169,17 +342,12 @@ export default function BookingPage() {
       <>
         <Header />
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
-          <div className="text-center bg-white rounded-2xl shadow-xl p-12">
-            <div className="text-6xl mb-6">❌</div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">
-              Flight Not Found
-            </h1>
-            <p className="text-gray-600 mb-8">
-              The flight you&apos;re looking for doesn&apos;t exist.
-            </p>
+          <div className="text-center">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">Flight Not Found</h1>
+            <p className="text-gray-600 mb-6">The flight you&apos;re looking for doesn&apos;t exist.</p>
             <button
               onClick={() => router.push("/")}
-              className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
             >
               Back to Search
             </button>
@@ -193,46 +361,7 @@ export default function BookingPage() {
     <>
       <Header />
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          {/* Progress Steps */}
-          <div className="mb-8">
-            <div className="flex items-center justify-center space-x-4">
-              <div
-                className={`flex items-center ${
-                  step === "passenger" ? "text-blue-600" : "text-gray-400"
-                }`}
-              >
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                    step === "passenger"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-200 text-gray-600"
-                  }`}
-                >
-                  1
-                </div>
-                <span className="ml-2 font-medium">Passenger Details</span>
-              </div>
-              <div className="w-16 h-0.5 bg-gray-300"></div>
-              <div
-                className={`flex items-center ${
-                  step === "payment" ? "text-blue-600" : "text-gray-400"
-                }`}
-              >
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                    step === "payment"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-200 text-gray-600"
-                  }`}
-                >
-                  2
-                </div>
-                <span className="ml-2 font-medium">Payment</span>
-              </div>
-            </div>
-          </div>
-
+        <div className="max-w-7xl mx-auto px-6 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             {/* Flight Summary */}
             <div className="lg:col-span-1">
@@ -243,80 +372,63 @@ export default function BookingPage() {
                 </h2>
 
                 <div className="space-y-4">
-                  <div className="bg-blue-50 rounded-lg p-4">
-                    <h3 className="font-bold text-lg text-gray-900 mb-2">
-                      {flight.airline} - {flight.flight_number}
-                    </h3>
-                    <p className="text-gray-600 mb-3">
-                      {flight.origin} → {flight.destination}
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <p className="text-gray-500">Departure</p>
-                        <p className="font-semibold text-gray-900">
-                          {formatTime(flight.departure_time)}
-                        </p>
-                        <p className="text-gray-500">
-                          {formatDate(flight.departure_time)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500">Arrival</p>
-                        <p className="font-semibold text-gray-900">
-                          {formatTime(flight.arrival_time)}
-                        </p>
-                        <p className="text-gray-500">
-                          {formatDate(flight.arrival_time)}
-                        </p>
-                      </div>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-sm text-gray-600">Flight</p>
+                      <p className="font-semibold">{flight.flight_number}</p>
                     </div>
-
-                    {/* Flight Duration */}
-                    <div className="mt-3 pt-3 border-t border-blue-200">
-                      <div className="flex items-center justify-center space-x-2">
-                        <span className="text-blue-600">⏱️</span>
-                        <span className="text-sm font-medium text-gray-700">
-                          Flight Duration: {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
-                        </span>
-                      </div>
+                    <div>
+                      <p className="text-sm text-gray-600">Airline</p>
+                      <p className="font-semibold">{flight.airline}</p>
                     </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Cabin Class:</span>
-                      <span className="font-medium text-gray-900">
-                        {flight.cabin_class}
-                      </span>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-sm text-gray-600">From</p>
+                      <p className="font-semibold">{flight.origin}</p>
+                      <p className="text-sm text-gray-500">
+                        {formatTime(flight.departure_time)}
+                      </p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Base Price:</span>
-                      <span className="font-medium text-gray-900">
-                        ₹{flight.price.toLocaleString()}
-                      </span>
+                    <div className="text-center">
+                      <div className="w-16 h-0.5 bg-gray-300 relative">
+                        <div className="absolute -top-1 left-0 w-2 h-2 bg-blue-600 rounded-full"></div>
+                        <div className="absolute -top-1 right-0 w-2 h-2 bg-blue-600 rounded-full"></div>
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
+                      </p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Passengers:</span>
-                      <span className="font-medium text-gray-900">
-                        {passengers.length}
-                      </span>
+                    <div className="text-right">
+                      <p className="text-sm text-gray-600">To</p>
+                      <p className="font-semibold">{flight.destination}</p>
+                      <p className="text-sm text-gray-500">
+                        {formatTime(flight.arrival_time)}
+                      </p>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Taxes & Fees:</span>
-                      <span className="font-medium text-gray-900">
-                        ₹{(flight.price * passengers.length * 0.1).toFixed(0)}
-                      </span>
+                  </div>
+
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <p className="text-sm text-gray-600">Date</p>
+                      <p className="font-semibold">{formatDate(flight.departure_time)}</p>
                     </div>
-                    <hr className="border-gray-200" />
-                    <div className="flex justify-between">
-                      <span className="text-lg font-semibold text-gray-900">
-                        Total:
-                      </span>
-                      <span className="text-xl font-bold text-green-600">
-                        ₹{(flight.price * passengers.length).toLocaleString()}
-                      </span>
+                    <div>
+                      <p className="text-sm text-gray-600">Class</p>
+                      <p className="font-semibold">{flight.cabin_class}</p>
                     </div>
+                  </div>
+
+                  <hr className="border-gray-200" />
+
+                  <div className="flex justify-between">
+                    <span className="text-lg font-semibold text-gray-900">
+                      Total:
+                    </span>
+                    <span className="text-xl font-bold text-green-600">
+                      ₹{(flight.price * passengers.length).toLocaleString()}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -342,10 +454,7 @@ export default function BookingPage() {
 
                   <div className="space-y-6">
                     {passengers.map((passenger, index) => (
-                      <div
-                        key={index}
-                        className="border border-gray-200 rounded-lg p-6 bg-gray-50"
-                      >
+                      <div key={index} className="border border-gray-200 rounded-lg p-6">
                         <div className="flex justify-between items-center mb-4">
                           <h3 className="text-lg font-semibold text-gray-900">
                             Passenger {index + 1}
@@ -353,7 +462,7 @@ export default function BookingPage() {
                           {passengers.length > 1 && (
                             <button
                               onClick={() => removePassenger(index)}
-                              className="text-red-600 hover:text-red-700 font-medium text-sm"
+                              className="text-red-600 hover:text-red-700 font-medium transition-colors duration-200"
                             >
                               Remove
                             </button>
@@ -366,13 +475,28 @@ export default function BookingPage() {
                               Full Name *
                             </label>
                             <input
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                                validationErrors.passengers?.[index]?.name ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                              }`}
                               placeholder="Enter full name"
                               value={passenger.name}
                               onChange={(e) =>
                                 updatePassenger(index, "name", e.target.value)
                               }
+                              onBlur={() => {
+                                const errors = validatePassenger(passenger);
+                                setValidationErrors(prev => ({
+                                  ...prev,
+                                  passengers: {
+                                    ...prev.passengers,
+                                    [index]: { ...prev.passengers?.[index], name: errors.name }
+                                  }
+                                }));
+                              }}
                             />
+                            {validationErrors.passengers?.[index]?.name && (
+                              <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].name}</p>
+                            )}
                           </div>
 
                           <div>
@@ -380,7 +504,9 @@ export default function BookingPage() {
                               Age *
                             </label>
                             <input
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                                validationErrors.passengers?.[index]?.age ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                              }`}
                               placeholder="Age"
                               type="number"
                               min="1"
@@ -389,7 +515,20 @@ export default function BookingPage() {
                               onChange={(e) =>
                                 updatePassenger(index, "age", e.target.value)
                               }
+                              onBlur={() => {
+                                const errors = validatePassenger(passenger);
+                                setValidationErrors(prev => ({
+                                  ...prev,
+                                  passengers: {
+                                    ...prev.passengers,
+                                    [index]: { ...prev.passengers?.[index], age: errors.age }
+                                  }
+                                }));
+                              }}
                             />
+                            {validationErrors.passengers?.[index]?.age && (
+                              <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].age}</p>
+                            )}
                           </div>
 
                           <div>
@@ -397,17 +536,32 @@ export default function BookingPage() {
                               Gender *
                             </label>
                             <select
-                              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                              className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                                validationErrors.passengers?.[index]?.gender ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                              }`}
                               value={passenger.gender}
                               onChange={(e) =>
                                 updatePassenger(index, "gender", e.target.value)
                               }
+                              onBlur={() => {
+                                const errors = validatePassenger(passenger);
+                                setValidationErrors(prev => ({
+                                  ...prev,
+                                  passengers: {
+                                    ...prev.passengers,
+                                    [index]: { ...prev.passengers?.[index], gender: errors.gender }
+                                  }
+                                }));
+                              }}
                             >
                               <option value="">Select Gender</option>
                               <option value="Male">Male</option>
                               <option value="Female">Female</option>
                               <option value="Other">Other</option>
                             </select>
+                            {validationErrors.passengers?.[index]?.gender && (
+                              <p className="text-red-600 text-sm mt-1">{validationErrors.passengers[index].gender}</p>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -415,7 +569,11 @@ export default function BookingPage() {
 
                     <button
                       className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={() => setStep("payment")}
+                      onClick={() => {
+                        if (validatePassengerForm()) {
+                          setStep("payment");
+                        }
+                      }}
                       disabled={!isPassengerFormValid()}
                     >
                       Continue to Payment
@@ -438,11 +596,23 @@ export default function BookingPage() {
                         Cardholder Name *
                       </label>
                       <input
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                        className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                          validationErrors.payment?.cardName ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                        }`}
                         placeholder="Name on card"
                         value={cardName}
                         onChange={(e) => setCardName(e.target.value)}
+                        onBlur={() => {
+                          const errors = validatePayment();
+                          setValidationErrors(prev => ({
+                            ...prev,
+                            payment: { ...prev.payment, cardName: errors.cardName }
+                          }));
+                        }}
                       />
+                      {validationErrors.payment?.cardName && (
+                        <p className="text-red-600 text-sm mt-1">{validationErrors.payment.cardName}</p>
+                      )}
                     </div>
 
                     <div>
@@ -450,7 +620,9 @@ export default function BookingPage() {
                         Card Number *
                       </label>
                       <input
-                        className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                        className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                          validationErrors.payment?.cardNumber ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                        }`}
                         placeholder="1234 5678 9012 3456"
                         maxLength={19}
                         value={cardNumber}
@@ -462,7 +634,17 @@ export default function BookingPage() {
                               .trim()
                           )
                         }
+                        onBlur={() => {
+                          const errors = validatePayment();
+                          setValidationErrors(prev => ({
+                            ...prev,
+                            payment: { ...prev.payment, cardNumber: errors.cardNumber }
+                          }));
+                        }}
                       />
+                      {validationErrors.payment?.cardNumber && (
+                        <p className="text-red-600 text-sm mt-1">{validationErrors.payment.cardNumber}</p>
+                      )}
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
@@ -471,12 +653,24 @@ export default function BookingPage() {
                           Expiry Date *
                         </label>
                         <input
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                            validationErrors.payment?.expiry ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                          }`}
                           placeholder="MM/YY"
                           maxLength={5}
                           value={expiry}
                           onChange={(e) => setExpiry(e.target.value)}
+                          onBlur={() => {
+                            const errors = validatePayment();
+                            setValidationErrors(prev => ({
+                              ...prev,
+                              payment: { ...prev.payment, expiry: errors.expiry }
+                            }));
+                          }}
                         />
+                        {validationErrors.payment?.expiry && (
+                          <p className="text-red-600 text-sm mt-1">{validationErrors.payment.expiry}</p>
+                        )}
                       </div>
 
                       <div>
@@ -484,13 +678,25 @@ export default function BookingPage() {
                           CVV *
                         </label>
                         <input
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                          className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                            validationErrors.payment?.cvv ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                          }`}
                           placeholder="123"
                           maxLength={4}
                           type="password"
                           value={cvv}
                           onChange={(e) => setCvv(e.target.value)}
+                          onBlur={() => {
+                            const errors = validatePayment();
+                            setValidationErrors(prev => ({
+                              ...prev,
+                              payment: { ...prev.payment, cvv: errors.cvv }
+                            }));
+                          }}
                         />
+                        {validationErrors.payment?.cvv && (
+                          <p className="text-red-600 text-sm mt-1">{validationErrors.payment.cvv}</p>
+                        )}
                       </div>
                     </div>
 

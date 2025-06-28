@@ -41,6 +41,11 @@ export default function HomePage() {
   });
   const [selectedDepartureFlight, setSelectedDepartureFlight] = useState<Flight | null>(null);
   const [selectedReturnFlight, setSelectedReturnFlight] = useState<Flight | null>(null);
+  const [validationErrors, setValidationErrors] = useState<{
+    departureDate?: string;
+    returnDate?: string;
+    passengerCount?: string;
+  }>({});
 
   useEffect(() => {
     const fetchFlights = async () => {
@@ -70,6 +75,48 @@ export default function HomePage() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
+
+  const validateDates = () => {
+    const errors: { departureDate?: string; returnDate?: string } = {};
+    
+    // Validate departure date
+    if (departureDateFilter) {
+      const departureDate = new Date(departureDateFilter);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      if (departureDate < today) {
+        errors.departureDate = "Departure date cannot be in the past";
+      }
+    }
+    
+    // Validate return date for round-trip
+    if (tripType === "round-trip" && returnDateFilter) {
+      const departureDate = new Date(departureDateFilter);
+      const returnDate = new Date(returnDateFilter);
+      
+      if (returnDate <= departureDate) {
+        errors.returnDate = "Return date must be after departure date";
+      }
+    }
+    
+    setValidationErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const validatePassengerCount = () => {
+    const total = getTotalPassengers();
+    if (total === 0) {
+      setValidationErrors(prev => ({ ...prev, passengerCount: "At least one passenger is required" }));
+      return false;
+    }
+    if (total > 9) {
+      setValidationErrors(prev => ({ ...prev, passengerCount: "Maximum 9 passengers allowed" }));
+      return false;
+    }
+    setValidationErrors(prev => ({ ...prev, passengerCount: undefined }));
+    return true;
+  };
 
   // Calculate flight duration in hours and minutes
   const calculateFlightDuration = (departureTime: string, arrivalTime: string) => {
@@ -162,6 +209,9 @@ export default function HomePage() {
       ...prev,
       [type]: Math.max(0, value) // Ensure non-negative values
     }));
+    
+    // Validate passenger count after update
+    setTimeout(() => validatePassengerCount(), 0);
   };
 
   const getTotalPassengers = () => {
@@ -210,6 +260,22 @@ export default function HomePage() {
   const clearSelections = () => {
     setSelectedDepartureFlight(null);
     setSelectedReturnFlight(null);
+  };
+
+  const handleDepartureDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDepartureDateFilter(e.target.value);
+    // Clear return date validation error when departure date changes
+    if (validationErrors.returnDate) {
+      setValidationErrors(prev => ({ ...prev, returnDate: undefined }));
+    }
+  };
+
+  const handleReturnDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setReturnDateFilter(e.target.value);
+    // Clear return date validation error when return date changes
+    if (validationErrors.returnDate) {
+      setValidationErrors(prev => ({ ...prev, returnDate: undefined }));
+    }
   };
 
   return (
@@ -304,10 +370,16 @@ export default function HomePage() {
                 </label>
                 <input
                   type="date"
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white"
+                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white ${
+                    validationErrors.departureDate ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                  }`}
                   value={departureDateFilter}
-                  onChange={(e) => setDepartureDateFilter(e.target.value)}
+                  onChange={handleDepartureDateChange}
+                  onBlur={validateDates}
                 />
+                {validationErrors.departureDate && (
+                  <p className="text-red-600 text-sm mt-1">{validationErrors.departureDate}</p>
+                )}
               </div>
 
               {tripType === "round-trip" && (
@@ -317,11 +389,17 @@ export default function HomePage() {
                   </label>
                   <input
                     type="date"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white"
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white ${
+                      validationErrors.returnDate ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                    }`}
                     value={returnDateFilter}
-                    onChange={(e) => setReturnDateFilter(e.target.value)}
+                    onChange={handleReturnDateChange}
+                    onBlur={validateDates}
                     min={departureDateFilter}
                   />
+                  {validationErrors.returnDate && (
+                    <p className="text-red-600 text-sm mt-1">{validationErrors.returnDate}</p>
+                  )}
                 </div>
               )}
 
@@ -350,7 +428,9 @@ export default function HomePage() {
                   <button
                     id="passenger-button"
                     type="button"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white text-left"
+                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white text-left ${
+                      validationErrors.passengerCount ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
+                    }`}
                     onClick={() => {
                       const dropdown = document.getElementById('passenger-dropdown');
                       dropdown?.classList.toggle('hidden');
@@ -361,6 +441,10 @@ export default function HomePage() {
                       <span className="text-gray-400">▼</span>
                     </span>
                   </button>
+                  
+                  {validationErrors.passengerCount && (
+                    <p className="text-red-600 text-sm mt-1">{validationErrors.passengerCount}</p>
+                  )}
                   
                   {/* Passenger Dropdown */}
                   <div id="passenger-dropdown" className="hidden absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4">
@@ -414,7 +498,7 @@ export default function HomePage() {
                       <div className="flex justify-between items-center">
                         <div>
                           <p className="font-medium text-gray-900">Infants</p>
-                          <p className="text-sm text-gray-500">Under 2 years</p>
+                          <p className="text-sm text-gray-500">Under 2</p>
                         </div>
                         <div className="flex items-center space-x-3">
                           <button
@@ -433,15 +517,6 @@ export default function HomePage() {
                             +
                           </button>
                         </div>
-                      </div>
-                      
-                      <div className="pt-3 border-t border-gray-200">
-                        <p className="text-sm text-gray-600">
-                          Total: <span className="font-medium">{getTotalPassengers()} passenger{getTotalPassengers() !== 1 ? 's' : ''}</span>
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Note: Infants must be accompanied by an adult
-                        </p>
                       </div>
                     </div>
                   </div>
