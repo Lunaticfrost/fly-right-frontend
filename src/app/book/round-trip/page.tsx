@@ -222,8 +222,16 @@ export default function RoundTripBookingPage() {
       return;
     }
 
-    // Calculate total price for both flights
-    const totalPrice = (departureFlight!.price + returnFlight!.price) * passengers.length;
+    // Check seat availability for both flights before booking
+    if (departureFlight!.available_seats !== undefined && departureFlight!.available_seats < passengers.length) {
+      alert(`Sorry, only ${departureFlight!.available_seats} seats are available for the departure flight. Please reduce the number of passengers or choose a different flight.`);
+      return;
+    }
+
+    if (returnFlight!.available_seats !== undefined && returnFlight!.available_seats < passengers.length) {
+      alert(`Sorry, only ${returnFlight!.available_seats} seats are available for the return flight. Please reduce the number of passengers or choose a different flight.`);
+      return;
+    }
 
     // Create departure booking
     const departureBooking = {
@@ -262,17 +270,43 @@ export default function RoundTripBookingPage() {
         .insert([departureBooking])
         .select();
 
-      const { data: returnData, error: returnError } = await supabase
+      const { error: returnError } = await supabase
         .from("bookings")
         .insert([returnBooking])
         .select();
 
       if (departureError || returnError) {
         alert(`Booking failed: ${departureError?.message || returnError?.message}`);
-      } else {
-        const departureBookingId = departureData?.[0]?.id;
-        router.push(`/booking-success?bookingId=${departureBookingId}&roundTrip=true`);
+        return;
       }
+
+      // Reduce available seats for both flights after successful booking
+      if (departureFlight!.available_seats !== undefined) {
+        const newDepartureSeats = departureFlight!.available_seats - passengers.length;
+        const { error: departureSeatError } = await supabase
+          .from("flights")
+          .update({ available_seats: newDepartureSeats })
+          .eq("id", departureFlightId);
+
+        if (departureSeatError) {
+          console.error("Failed to update departure flight seat availability:", departureSeatError);
+        }
+      }
+
+      if (returnFlight!.available_seats !== undefined) {
+        const newReturnSeats = returnFlight!.available_seats - passengers.length;
+        const { error: returnSeatError } = await supabase
+          .from("flights")
+          .update({ available_seats: newReturnSeats })
+          .eq("id", returnFlightId);
+
+        if (returnSeatError) {
+          console.error("Failed to update return flight seat availability:", returnSeatError);
+        }
+      }
+
+      const departureBookingId = departureData?.[0]?.id;
+      router.push(`/booking-success?bookingId=${departureBookingId}&roundTrip=true`);
     } catch {
       alert("An unexpected error occurred. Please try again.");
     }

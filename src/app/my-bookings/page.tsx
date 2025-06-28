@@ -4,12 +4,41 @@ import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 
+interface Booking {
+  id: string;
+  user_id: string;
+  flight_id: string;
+  passengers: any[];
+  cabin_class: string;
+  total_price: number;
+  trip_type: string;
+  status: string;
+  payment_method: string;
+  payment_status: string;
+  transaction_id: string;
+  paid_at: string;
+  booking_date: string;
+}
+
+interface Flight {
+  id: string;
+  flight_number: string;
+  airline: string;
+  origin: string;
+  destination: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  cabin_class: string;
+  available_seats?: number;
+}
+
 export default function MyBookingsPage() {
-  const [bookings, setBookings] = useState<any[]>([]);
-  const [flights, setFlights] = useState<Record<string, any>>({});
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [flights, setFlights] = useState<Record<string, Flight>>({});
   const [loading, setLoading] = useState(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
-  const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const router = useRouter();
 
@@ -38,7 +67,7 @@ export default function MyBookingsPage() {
         .select("*")
         .in("id", flightIds);
 
-      const flightMap = {};
+      const flightMap: Record<string, Flight> = {};
       for (const flight of flightData || []) {
         flightMap[flight.id] = flight;
       }
@@ -135,27 +164,46 @@ export default function MyBookingsPage() {
       if (error) {
         console.error("Cancellation error:", error);
         alert(`Failed to cancel booking: ${error.message}`);
-      } else {
-        console.log("Booking cancelled successfully:", data);
-        
-        // Refresh bookings
-        const { data: bookingData, error: fetchError } = await supabase
-          .from("bookings")
-          .select("*")
-          .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-          .order("booking_date", { ascending: false });
-        
-        if (fetchError) {
-          console.error("Error fetching updated bookings:", fetchError);
-        } else {
-          console.log("Updated bookings:", bookingData);
-          setBookings(bookingData || []);
-        }
-        
-        setShowCancelModal(false);
-        setSelectedBooking(null);
-        alert("Booking cancelled successfully!");
+        return;
       }
+
+      // Restore seats to the flight after successful cancellation
+      const flight = flights[selectedBooking.flight_id];
+      if (flight && flight.available_seats !== undefined) {
+        const passengerCount = selectedBooking.passengers?.length || 1;
+        const newAvailableSeats = flight.available_seats + passengerCount;
+        
+        const { error: seatUpdateError } = await supabase
+          .from("flights")
+          .update({ available_seats: newAvailableSeats })
+          .eq("id", selectedBooking.flight_id);
+
+        if (seatUpdateError) {
+          console.error("Failed to restore seat availability:", seatUpdateError);
+          // Note: In a production system, you might want to handle this more gracefully
+          // For now, we'll just log the error since the cancellation was successful
+        }
+      }
+      
+      console.log("Booking cancelled successfully:", data);
+      
+      // Refresh bookings
+      const { data: bookingData, error: fetchError } = await supabase
+        .from("bookings")
+        .select("*")
+        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+        .order("booking_date", { ascending: false });
+      
+      if (fetchError) {
+        console.error("Error fetching updated bookings:", fetchError);
+      } else {
+        console.log("Updated bookings:", bookingData);
+        setBookings(bookingData || []);
+      }
+      
+      setShowCancelModal(false);
+      setSelectedBooking(null);
+      alert("Booking cancelled successfully!");
     } catch (error) {
       console.error("Cancellation exception:", error);
       alert("An error occurred while cancelling the booking.");

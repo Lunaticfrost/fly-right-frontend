@@ -165,6 +165,15 @@ export default function ModifyBookingPage() {
     try {
       const newTotalPrice = selectedFlight.price * passengers.length;
       
+      // Check if we're changing flights and if the new flight has enough seats
+      if (selectedFlight.id !== flight!.id) {
+        if (selectedFlight.available_seats !== undefined && selectedFlight.available_seats < passengers.length) {
+          alert(`Sorry, only ${selectedFlight.available_seats} seats are available for the selected flight. Please choose a different flight or reduce the number of passengers.`);
+          setSaving(false);
+          return;
+        }
+      }
+      
       const { error } = await supabase
         .from("bookings")
         .update({
@@ -176,10 +185,43 @@ export default function ModifyBookingPage() {
 
       if (error) {
         alert(`Failed to modify booking: ${error.message}`);
-      } else {
-        alert("Booking modified successfully!");
-        router.push("/my-bookings");
+        return;
       }
+
+      // Handle seat management when changing flights
+      if (selectedFlight.id !== flight!.id) {
+        // Restore seats to the original flight
+        if (flight!.available_seats !== undefined) {
+          const originalPassengerCount = booking!.passengers?.length || 1;
+          const newOriginalSeats = flight!.available_seats + originalPassengerCount;
+          
+          const { error: originalSeatError } = await supabase
+            .from("flights")
+            .update({ available_seats: newOriginalSeats })
+            .eq("id", flight!.id);
+
+          if (originalSeatError) {
+            console.error("Failed to restore seats to original flight:", originalSeatError);
+          }
+        }
+
+        // Reduce seats from the new flight
+        if (selectedFlight.available_seats !== undefined) {
+          const newAvailableSeats = selectedFlight.available_seats - passengers.length;
+          
+          const { error: newSeatError } = await supabase
+            .from("flights")
+            .update({ available_seats: newAvailableSeats })
+            .eq("id", selectedFlight.id);
+
+          if (newSeatError) {
+            console.error("Failed to reduce seats from new flight:", newSeatError);
+          }
+        }
+      }
+
+      alert("Booking modified successfully!");
+      router.push("/my-bookings");
     } catch {
       alert("An unexpected error occurred while modifying the booking.");
     } finally {
