@@ -49,6 +49,13 @@ export default function Header() {
                 <span>My Bookings</span>
               </Link>
               <Link
+                href="/admin"
+                className="flex items-center space-x-1 px-3 py-2 rounded-lg hover:bg-white/20 transition-all duration-200 hover:scale-105"
+              >
+                <span>📊</span>
+                <span>Admin</span>
+              </Link>
+              <Link
                 href="/offline-settings"
                 className="flex items-center space-x-1 px-3 py-2 rounded-lg hover:bg-white/20 transition-all duration-200 hover:scale-105"
               >
