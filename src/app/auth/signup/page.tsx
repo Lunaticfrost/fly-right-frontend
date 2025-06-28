@@ -71,42 +71,52 @@ export default function SignUpPage() {
     return Object.keys(errors).length === 0;
   };
 
+  // Check if form is valid for button state
+  const isFormValid = (): boolean => {
+    return !loading && 
+           name.trim() !== '' && 
+           email.trim() !== '' && 
+           password !== '' && 
+           confirmPassword !== '' &&
+           !validationErrors.name && 
+           !validationErrors.email && 
+           !validationErrors.password && 
+           !validationErrors.confirmPassword;
+  };
+
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setName(value);
-    if (validationErrors.name) {
-      const error = validateName(value);
-      setValidationErrors(prev => ({
-        ...prev,
-        name: error
-      }));
-    }
+    // Clear validation error if input becomes valid
+    const error = validateName(value);
+    setValidationErrors(prev => ({
+      ...prev,
+      name: error
+    }));
   };
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setEmail(value);
-    if (validationErrors.email) {
-      const error = validateEmail(value);
-      setValidationErrors(prev => ({
-        ...prev,
-        email: error
-      }));
-    }
+    // Clear validation error if input becomes valid
+    const error = validateEmail(value);
+    setValidationErrors(prev => ({
+      ...prev,
+      email: error
+    }));
   };
 
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPassword(value);
-    if (validationErrors.password) {
-      const error = validatePassword(value);
-      setValidationErrors(prev => ({
-        ...prev,
-        password: error
-      }));
-    }
+    // Clear validation error if input becomes valid
+    const error = validatePassword(value);
+    setValidationErrors(prev => ({
+      ...prev,
+      password: error
+    }));
     // Also validate confirm password when password changes
-    if (confirmPassword && validationErrors.confirmPassword) {
+    if (confirmPassword) {
       const confirmError = validateConfirmPassword(confirmPassword);
       setValidationErrors(prev => ({
         ...prev,
@@ -118,13 +128,12 @@ export default function SignUpPage() {
   const handleConfirmPasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setConfirmPassword(value);
-    if (validationErrors.confirmPassword) {
-      const error = validateConfirmPassword(value);
-      setValidationErrors(prev => ({
-        ...prev,
-        confirmPassword: error
-      }));
-    }
+    // Clear validation error if input becomes valid
+    const error = validateConfirmPassword(value);
+    setValidationErrors(prev => ({
+      ...prev,
+      confirmPassword: error
+    }));
   };
 
   const handleSignUp = async () => {
@@ -292,7 +301,7 @@ export default function SignUpPage() {
 
             <button
               type="submit"
-              disabled={loading || Object.keys(validationErrors).length > 0}
+              disabled={!isFormValid()}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
