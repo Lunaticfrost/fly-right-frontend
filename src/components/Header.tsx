@@ -48,6 +48,13 @@ export default function Header() {
                 <span>📋</span>
                 <span>My Bookings</span>
               </Link>
+              <Link
+                href="/offline-settings"
+                className="flex items-center space-x-1 px-3 py-2 rounded-lg hover:bg-white/20 transition-all duration-200 hover:scale-105"
+              >
+                <span>⚙️</span>
+                <span>Offline Settings</span>
+              </Link>
             </nav>
           </div>
 

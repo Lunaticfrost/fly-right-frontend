@@ -1,21 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-
-interface Flight {
-  id: string;
-  flight_number: string;
-  airline: string;
-  origin: string;
-  destination: string;
-  departure_time: string;
-  arrival_time: string;
-  price: number;
-  cabin_class: string;
-  available_seats?: number;
-}
+import OfflineIndicator from "@/components/OfflineIndicator";
+import { useOfflineData } from "@/hooks/useOfflineData";
+import { Flight } from "@/lib/indexedDB";
 
 interface PassengerCount {
   adults: number;
@@ -23,64 +12,75 @@ interface PassengerCount {
   infants: number;
 }
 
+interface ValidationErrors {
+  origin?: string;
+  destination?: string;
+  departureDate?: string;
+  returnDate?: string;
+  passengerCount?: string;
+}
+
 export default function HomePage() {
+  const router = useRouter();
+  const { isOnline, getFlights, searchFlights } = useOfflineData();
+  
   const [flights, setFlights] = useState<Flight[]>([]);
   const [filteredFlights, setFilteredFlights] = useState<Flight[]>([]);
   const [loading, setLoading] = useState(true);
-  const [departureDateFilter, setDepartureDateFilter] = useState("");
-  const [returnDateFilter, setReturnDateFilter] = useState("");
-  const [cabinClassFilter, setCabinClassFilter] = useState("");
-  const [tripType, setTripType] = useState<"one-way" | "round-trip">("one-way");
-  const router = useRouter();
+  const [searching, setSearching] = useState(false);
+
+  // Filters
   const [originFilter, setOriginFilter] = useState("");
   const [destinationFilter, setDestinationFilter] = useState("");
+  const [departureDateFilter, setDepartureDateFilter] = useState("");
+  const [returnDateFilter, setReturnDateFilter] = useState("");
+  const [tripType, setTripType] = useState<"one-way" | "round-trip">("one-way");
+  const [cabinClassFilter, setCabinClassFilter] = useState("");
   const [passengerCount, setPassengerCount] = useState<PassengerCount>({
     adults: 1,
     children: 0,
     infants: 0,
   });
-  const [selectedDepartureFlight, setSelectedDepartureFlight] = useState<Flight | null>(null);
-  const [selectedReturnFlight, setSelectedReturnFlight] = useState<Flight | null>(null);
-  const [validationErrors, setValidationErrors] = useState<{
-    departureDate?: string;
-    returnDate?: string;
-    passengerCount?: string;
-  }>({});
+
+  // Validation
+  const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
 
   useEffect(() => {
     const fetchFlights = async () => {
-      const { data, error } = await supabase.from("flights").select("*");
-      if (!error && data) {
-        setFlights(data);
-        setFilteredFlights(data);
+      setLoading(true);
+      try {
+        const flightsData = await getFlights();
+        setFlights(flightsData);
+        setFilteredFlights(flightsData);
+      } catch (error) {
+        console.error("Error fetching flights:", error);
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     };
+
     fetchFlights();
-  }, []);
+  }, [getFlights]);
 
-  // Add click outside handler for passenger dropdown
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const dropdown = document.getElementById('passenger-dropdown');
-      const button = document.getElementById('passenger-button');
-      
-      if (dropdown && button && !button.contains(event.target as Node) && !dropdown.contains(event.target as Node)) {
-        dropdown.classList.add('hidden');
-      }
-    };
+  // Validation functions
+  const validateForm = (): boolean => {
+    const errors: ValidationErrors = {};
 
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, []);
+    if (!originFilter) {
+      errors.origin = "Please select origin";
+    }
 
-  const validateDates = () => {
-    const errors: { departureDate?: string; returnDate?: string } = {};
-    
-    // Validate departure date
-    if (departureDateFilter) {
+    if (!destinationFilter) {
+      errors.destination = "Please select destination";
+    }
+
+    if (originFilter && destinationFilter && originFilter === destinationFilter) {
+      errors.destination = "Origin and destination cannot be the same";
+    }
+
+    if (!departureDateFilter) {
+      errors.departureDate = "Please select departure date";
+    } else {
       const departureDate = new Date(departureDateFilter);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -89,48 +89,84 @@ export default function HomePage() {
         errors.departureDate = "Departure date cannot be in the past";
       }
     }
-    
-    // Validate return date for round-trip
-    if (tripType === "round-trip" && returnDateFilter) {
-      const departureDate = new Date(departureDateFilter);
-      const returnDate = new Date(returnDateFilter);
-      
-      if (returnDate <= departureDate) {
-        errors.returnDate = "Return date must be after departure date";
+
+    if (tripType === "round-trip") {
+      if (!returnDateFilter) {
+        errors.returnDate = "Please select return date";
+      } else {
+        const departureDate = new Date(departureDateFilter);
+        const returnDate = new Date(returnDateFilter);
+        
+        if (returnDate <= departureDate) {
+          errors.returnDate = "Return date must be after departure date";
+        }
       }
     }
-    
+
+    const totalPassengers = getTotalPassengers();
+    if (totalPassengers === 0) {
+      errors.passengerCount = "At least one passenger is required";
+    } else if (totalPassengers > 9) {
+      errors.passengerCount = "Maximum 9 passengers allowed";
+    } else if (passengerCount.adults === 0) {
+      errors.passengerCount = "At least one adult is required";
+    } else if (passengerCount.infants > passengerCount.adults) {
+      errors.passengerCount = "Number of infants cannot exceed number of adults";
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  const validatePassengerCount = () => {
-    const total = getTotalPassengers();
-    if (total === 0) {
-      setValidationErrors(prev => ({ ...prev, passengerCount: "At least one passenger is required" }));
-      return false;
+  const validatePassengerCount = (): boolean => {
+    const totalPassengers = getTotalPassengers();
+    const errors: ValidationErrors = { ...validationErrors };
+
+    if (totalPassengers === 0) {
+      errors.passengerCount = "At least one passenger is required";
+    } else if (totalPassengers > 9) {
+      errors.passengerCount = "Maximum 9 passengers allowed";
+    } else if (passengerCount.adults === 0) {
+      errors.passengerCount = "At least one adult is required";
+    } else if (passengerCount.infants > passengerCount.adults) {
+      errors.passengerCount = "Number of infants cannot exceed number of adults";
+    } else {
+      delete errors.passengerCount;
     }
-    if (total > 9) {
-      setValidationErrors(prev => ({ ...prev, passengerCount: "Maximum 9 passengers allowed" }));
-      return false;
-    }
-    setValidationErrors(prev => ({ ...prev, passengerCount: undefined }));
-    return true;
+
+    setValidationErrors(errors);
+    return !errors.passengerCount;
   };
 
-  // Calculate flight duration in hours and minutes
-  const calculateFlightDuration = (departureTime: string, arrivalTime: string) => {
-    const departure = new Date(departureTime);
-    const arrival = new Date(arrivalTime);
-    const durationMs = arrival.getTime() - departure.getTime();
-    const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
-    const durationMinutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
-    
-    if (durationHours > 0) {
-      return `${durationHours}h ${durationMinutes}m`;
-    } else {
-      return `${durationMinutes}m`;
+  const handleSearch = async () => {
+    if (!validateForm()) {
+      return;
     }
+
+    setSearching(true);
+    try {
+      const searchResults = await searchFlights(
+        originFilter,
+        destinationFilter,
+        departureDateFilter
+      );
+      setFilteredFlights(searchResults);
+    } catch (error) {
+      console.error("Error searching flights:", error);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const clearFilters = () => {
+    setOriginFilter("");
+    setDestinationFilter("");
+    setDepartureDateFilter("");
+    setReturnDateFilter("");
+    setCabinClassFilter("");
+    setPassengerCount({ adults: 1, children: 0, infants: 0 });
+    setValidationErrors({});
+    setFilteredFlights(flights);
   };
 
   // Update filtered flights whenever filters change
@@ -218,457 +254,379 @@ export default function HomePage() {
     return passengerCount.adults + passengerCount.children + passengerCount.infants;
   };
 
-  const getPassengerDisplayText = () => {
-    const parts = [];
+  const calculateFlightDuration = (departureTime: string, arrivalTime: string) => {
+    const departure = new Date(departureTime);
+    const arrival = new Date(arrivalTime);
+    const durationMs = arrival.getTime() - departure.getTime();
+    const durationHours = Math.floor(durationMs / (1000 * 60 * 60));
+    const durationMinutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60));
     
-    if (passengerCount.adults > 0) {
-      parts.push(`${passengerCount.adults} Adult${passengerCount.adults > 1 ? 's' : ''}`);
-    }
-    if (passengerCount.children > 0) {
-      parts.push(`${passengerCount.children} Child${passengerCount.children > 1 ? 'ren' : ''}`);
-    }
-    if (passengerCount.infants > 0) {
-      parts.push(`${passengerCount.infants} Infant${passengerCount.infants > 1 ? 's' : ''}`);
-    }
-    
-    return parts.join(', ') || '1 Adult';
-  };
-
-  const handleFlightSelection = (flight: Flight) => {
-    if (tripType === "round-trip") {
-      const isDepartureFlight = flight.origin === originFilter && flight.destination === destinationFilter;
-      
-      if (isDepartureFlight) {
-        setSelectedDepartureFlight(flight);
-        setSelectedReturnFlight(null); // Reset return flight when departure changes
-      } else {
-        setSelectedReturnFlight(flight);
-      }
+    if (durationHours > 0) {
+      return `${durationHours}h ${durationMinutes}m`;
     } else {
-      // For one-way, directly navigate to booking
+      return `${durationMinutes}m`;
+    }
+  };
+
+  const handleFlightSelect = (flight: Flight) => {
+    if (tripType === "one-way") {
       router.push(`/book/${flight.id}`);
+    } else {
+      // For round-trip, store departure flight and navigate to round-trip booking
+      const searchParams = new URLSearchParams({
+        departureFlightId: flight.id,
+        origin: flight.origin,
+        destination: flight.destination,
+        departureDate: departureDateFilter,
+        returnDate: returnDateFilter,
+        adults: passengerCount.adults.toString(),
+        children: passengerCount.children.toString(),
+        infants: passengerCount.infants.toString(),
+      });
+      router.push(`/book/round-trip?${searchParams.toString()}`);
     }
   };
 
-  const handleRoundTripBooking = () => {
-    if (selectedDepartureFlight && selectedReturnFlight) {
-      // Navigate to round-trip booking with both flight IDs
-      router.push(`/book/round-trip?departure=${selectedDepartureFlight.id}&return=${selectedReturnFlight.id}`);
-    }
-  };
-
-  const clearSelections = () => {
-    setSelectedDepartureFlight(null);
-    setSelectedReturnFlight(null);
-  };
-
-  const handleDepartureDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setDepartureDateFilter(e.target.value);
-    // Clear return date validation error when departure date changes
-    if (validationErrors.returnDate) {
-      setValidationErrors(prev => ({ ...prev, returnDate: undefined }));
-    }
-  };
-
-  const handleReturnDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setReturnDateFilter(e.target.value);
-    // Clear return date validation error when return date changes
-    if (validationErrors.returnDate) {
-      setValidationErrors(prev => ({ ...prev, returnDate: undefined }));
-    }
-  };
+  if (loading) {
+    return (
+      <>
+        <Header />
+        <OfflineIndicator />
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading flights...</p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>
       <Header />
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-        <div className="max-w-7xl mx-auto px-6 py-8">
-          {/* Hero Section */}
-          <div className="text-center mb-12">
-            <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              Find Your Perfect Flight
-            </h1>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Discover amazing destinations with our curated selection of
-              flights. Book with confidence and start your journey today.
-            </p>
-          </div>
-
-          {/* Filters Section */}
-          <div className="bg-white rounded-2xl shadow-xl p-6 mb-8 border border-gray-100">
-            <h2 className="text-xl font-semibold text-gray-800 mb-6 flex items-center">
-              <span className="mr-2">🔍</span>
-              Search Filters
-            </h2>
-            
-            {/* Trip Type Selection */}
-            <div className="mb-6">
-              <div className="flex space-x-4">
-                <button
-                  onClick={() => setTripType("one-way")}
-                  className={`px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
-                    tripType === "one-way"
-                      ? "bg-blue-600 text-white shadow-md"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  One Way
-                </button>
-                <button
-                  onClick={() => setTripType("round-trip")}
-                  className={`px-6 py-3 rounded-lg font-medium transition-all duration-200 ${
-                    tripType === "round-trip"
-                      ? "bg-blue-600 text-white shadow-md"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  Round Trip
-                </button>
-              </div>
+      <OfflineIndicator />
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+        {/* Hero Section */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-16">
+          <div className="container mx-auto px-4">
+            <div className="text-center">
+              <h1 className="text-4xl md:text-6xl font-bold mb-6">
+                Find Your Perfect Flight
+              </h1>
+              <p className="text-xl md:text-2xl text-blue-100 mb-8">
+                Search, compare, and book flights with ease
+              </p>
             </div>
+          </div>
+        </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+        {/* Search Form */}
+        <div className="container mx-auto px-4 -mt-8">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 mb-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              {/* Trip Type Selection */}
+              <div className="lg:col-span-2">
+                <div className="flex space-x-4 mb-6">
+                  <button
+                    className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all duration-200 ${
+                      tripType === "one-way"
+                        ? "bg-blue-600 text-white shadow-lg"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                    onClick={() => setTripType("one-way")}
+                  >
+                    ✈️ One Way
+                  </button>
+                  <button
+                    className={`flex-1 py-3 px-6 rounded-lg font-medium transition-all duration-200 ${
+                      tripType === "round-trip"
+                        ? "bg-blue-600 text-white shadow-lg"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                    onClick={() => setTripType("round-trip")}
+                  >
+                    🔄 Round Trip
+                  </button>
+                </div>
+              </div>
+
+              {/* Origin */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   From
                 </label>
                 <select
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white"
                   value={originFilter}
                   onChange={(e) => setOriginFilter(e.target.value)}
+                  className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                    validationErrors.origin ? 'border-red-500' : 'border-gray-300'
+                  }`}
                 >
-                  <option value="">All Origins</option>
+                  <option value="">Select Origin</option>
                   {origins.map((origin) => (
                     <option key={origin} value={origin}>
                       {origin}
                     </option>
                   ))}
                 </select>
+                {validationErrors.origin && (
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.origin}</p>
+                )}
               </div>
 
+              {/* Destination */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   To
                 </label>
                 <select
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white"
                   value={destinationFilter}
                   onChange={(e) => setDestinationFilter(e.target.value)}
+                  className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                    validationErrors.destination ? 'border-red-500' : 'border-gray-300'
+                  }`}
                 >
-                  <option value="">All Destinations</option>
-                  {destinations.map((dest) => (
-                    <option key={dest} value={dest}>
-                      {dest}
+                  <option value="">Select Destination</option>
+                  {destinations.map((destination) => (
+                    <option key={destination} value={destination}>
+                      {destination}
                     </option>
                   ))}
                 </select>
+                {validationErrors.destination && (
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.destination}</p>
+                )}
               </div>
 
+              {/* Departure Date */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Departure Date
                 </label>
                 <input
                   type="date"
-                  className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white ${
-                    validationErrors.departureDate ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
-                  }`}
                   value={departureDateFilter}
-                  onChange={handleDepartureDateChange}
-                  onBlur={validateDates}
+                  onChange={(e) => setDepartureDateFilter(e.target.value)}
+                  className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                    validationErrors.departureDate ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                  min={new Date().toISOString().split('T')[0]}
                 />
                 {validationErrors.departureDate && (
-                  <p className="text-red-600 text-sm mt-1">{validationErrors.departureDate}</p>
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.departureDate}</p>
                 )}
               </div>
 
+              {/* Return Date (for round-trip) */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {tripType === "round-trip" ? "Return Date" : "Cabin Class"}
+                </label>
+                {tripType === "round-trip" ? (
+                  <input
+                    type="date"
+                    value={returnDateFilter}
+                    onChange={(e) => setReturnDateFilter(e.target.value)}
+                    className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 ${
+                      validationErrors.returnDate ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                    min={departureDateFilter || new Date().toISOString().split('T')[0]}
+                  />
+                ) : (
+                  <select
+                    value={cabinClassFilter}
+                    onChange={(e) => setCabinClassFilter(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                  >
+                    <option value="">All Classes</option>
+                    <option value="Economy">Economy</option>
+                    <option value="Business">Business</option>
+                    <option value="First">First</option>
+                  </select>
+                )}
+                {validationErrors.returnDate && (
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.returnDate}</p>
+                )}
+              </div>
+
+              {/* Cabin Class (for round-trip) */}
               {tripType === "round-trip" && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Return Date
+                    Cabin Class
                   </label>
-                  <input
-                    type="date"
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white ${
-                      validationErrors.returnDate ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
-                    }`}
-                    value={returnDateFilter}
-                    onChange={handleReturnDateChange}
-                    onBlur={validateDates}
-                    min={departureDateFilter}
-                  />
-                  {validationErrors.returnDate && (
-                    <p className="text-red-600 text-sm mt-1">{validationErrors.returnDate}</p>
-                  )}
+                  <select
+                    value={cabinClassFilter}
+                    onChange={(e) => setCabinClassFilter(e.target.value)}
+                    className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200"
+                  >
+                    <option value="">All Classes</option>
+                    <option value="Economy">Economy</option>
+                    <option value="Business">Business</option>
+                    <option value="First">First</option>
+                  </select>
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Cabin Class
-                </label>
-                <select
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white"
-                  value={cabinClassFilter}
-                  onChange={(e) => setCabinClassFilter(e.target.value)}
-                >
-                  <option value="">All Classes</option>
-                  <option value="Economy">Economy</option>
-                  <option value="Premium Economy">Premium Economy</option>
-                  <option value="Business">Business</option>
-                  <option value="First">First</option>
-                </select>
-              </div>
-
-              <div>
+              {/* Passenger Count */}
+              <div className="lg:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Passengers
                 </label>
-                <div className="relative">
-                  <button
-                    id="passenger-button"
-                    type="button"
-                    className={`w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all duration-200 bg-white text-left ${
-                      validationErrors.passengerCount ? 'border-red-300 focus:ring-red-500 focus:border-red-500' : 'border-gray-300'
-                    }`}
-                    onClick={() => {
-                      const dropdown = document.getElementById('passenger-dropdown');
-                      dropdown?.classList.toggle('hidden');
-                    }}
-                  >
-                    <span className="flex items-center justify-between">
-                      <span>{getPassengerDisplayText()}</span>
-                      <span className="text-gray-400">▼</span>
-                    </span>
-                  </button>
-                  
-                  {validationErrors.passengerCount && (
-                    <p className="text-red-600 text-sm mt-1">{validationErrors.passengerCount}</p>
-                  )}
-                  
-                  {/* Passenger Dropdown */}
-                  <div id="passenger-dropdown" className="hidden absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg p-4">
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-medium text-gray-900">Adults</p>
-                          <p className="text-sm text-gray-500">Age 12+</p>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <button
-                            onClick={() => updatePassengerCount('adults', passengerCount.adults - 1)}
-                            disabled={passengerCount.adults <= 1}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-medium">{passengerCount.adults}</span>
-                          <button
-                            onClick={() => updatePassengerCount('adults', passengerCount.adults + 1)}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-50"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-medium text-gray-900">Children</p>
-                          <p className="text-sm text-gray-500">Age 2-11</p>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <button
-                            onClick={() => updatePassengerCount('children', passengerCount.children - 1)}
-                            disabled={passengerCount.children <= 0}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-medium">{passengerCount.children}</span>
-                          <button
-                            onClick={() => updatePassengerCount('children', passengerCount.children + 1)}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center hover:bg-gray-50"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-medium text-gray-900">Infants</p>
-                          <p className="text-sm text-gray-500">Under 2</p>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <button
-                            onClick={() => updatePassengerCount('infants', passengerCount.infants - 1)}
-                            disabled={passengerCount.infants <= 0}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                          >
-                            -
-                          </button>
-                          <span className="w-8 text-center font-medium">{passengerCount.infants}</span>
-                          <button
-                            onClick={() => updatePassengerCount('infants', passengerCount.infants + 1)}
-                            disabled={passengerCount.infants >= passengerCount.adults}
-                            className="w-8 h-8 rounded-full border border-gray-300 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Trip Type Info */}
-            {tripType === "round-trip" && (
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <span className="font-medium">Round-trip selected:</span> Select your departure flight first, then choose a return flight. Both flights will be booked together.
-                </p>
-              </div>
-            )}
-
-            {/* Round-trip Selection Summary */}
-            {tripType === "round-trip" && (selectedDepartureFlight || selectedReturnFlight) && (
-              <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
-                <h3 className="font-semibold text-green-800 mb-3">Selected Flights:</h3>
-                <div className="space-y-2">
-                  {selectedDepartureFlight && (
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="text-sm font-medium text-green-700">🛫 Departure:</span>
-                        <span className="text-sm text-green-600 ml-2">
-                          {selectedDepartureFlight.airline} - {selectedDepartureFlight.flight_number}
-                        </span>
-                      </div>
-                      <span className="text-sm text-green-600">
-                        ₹{selectedDepartureFlight.price.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                  {selectedReturnFlight && (
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="text-sm font-medium text-green-700">🛬 Return:</span>
-                        <span className="text-sm text-green-600 ml-2">
-                          {selectedReturnFlight.airline} - {selectedReturnFlight.flight_number}
-                        </span>
-                      </div>
-                      <span className="text-sm text-green-600">
-                        ₹{selectedReturnFlight.price.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                {selectedDepartureFlight && selectedReturnFlight && (
-                  <div className="mt-3 pt-3 border-t border-green-200">
-                    <div className="flex justify-between items-center">
-                      <span className="font-semibold text-green-800">Total for {getTotalPassengers()} passenger{getTotalPassengers() !== 1 ? 's' : ''}:</span>
-                      <span className="font-bold text-green-800">
-                        ₹{((selectedDepartureFlight.price + selectedReturnFlight.price) * getTotalPassengers()).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex space-x-3 mt-3">
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Adults (12+)</label>
+                    <div className="flex items-center space-x-2">
                       <button
-                        onClick={handleRoundTripBooking}
-                        className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg font-medium transition-all duration-200 hover:scale-105"
+                        onClick={() => updatePassengerCount('adults', passengerCount.adults - 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={passengerCount.adults <= 1}
                       >
-                        Book Round Trip
+                        -
                       </button>
+                      <span className="w-8 text-center font-medium">{passengerCount.adults}</span>
                       <button
-                        onClick={clearSelections}
-                        className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium transition-all duration-200"
+                        onClick={() => updatePassengerCount('adults', passengerCount.adults + 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={getTotalPassengers() >= 9}
                       >
-                        Clear Selection
+                        +
                       </button>
                     </div>
                   </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Children (2-11)</label>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => updatePassengerCount('children', passengerCount.children - 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={passengerCount.children <= 0}
+                      >
+                        -
+                      </button>
+                      <span className="w-8 text-center font-medium">{passengerCount.children}</span>
+                      <button
+                        onClick={() => updatePassengerCount('children', passengerCount.children + 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={getTotalPassengers() >= 9}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Infants (0-1)</label>
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => updatePassengerCount('infants', passengerCount.infants - 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={passengerCount.infants <= 0}
+                      >
+                        -
+                      </button>
+                      <span className="w-8 text-center font-medium">{passengerCount.infants}</span>
+                      <button
+                        onClick={() => updatePassengerCount('infants', passengerCount.infants + 1)}
+                        className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center hover:bg-gray-300 transition-colors"
+                        disabled={passengerCount.infants >= passengerCount.adults || getTotalPassengers() >= 9}
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                {validationErrors.passengerCount && (
+                  <p className="text-red-500 text-sm mt-1">{validationErrors.passengerCount}</p>
                 )}
               </div>
-            )}
+
+              {/* Search and Clear Buttons */}
+              <div className="lg:col-span-2 flex space-x-4">
+                <button
+                  onClick={handleSearch}
+                  disabled={searching}
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {searching ? (
+                    <span className="flex items-center justify-center">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                      Searching...
+                    </span>
+                  ) : (
+                    "🔍 Search Flights"
+                  )}
+                </button>
+                <button
+                  onClick={clearFilters}
+                  className="px-8 bg-gray-500 hover:bg-gray-600 text-white py-4 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Results Section */}
-          <div className="space-y-6">
-            {loading && (
-              <div className="text-center py-12">
-                <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                <p className="mt-4 text-gray-600">Loading flights...</p>
-              </div>
-            )}
+          <div className="mb-8">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">
+                {filteredFlights.length} Flights Found
+              </h2>
+              {!isOnline && (
+                <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">
+                  📱 Offline Mode - Cached Results
+                </div>
+              )}
+            </div>
 
-            {!loading && filteredFlights.length === 0 && (
+            {filteredFlights.length === 0 ? (
               <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
                 <div className="text-6xl mb-4">✈️</div>
-                <h3 className="text-xl font-semibold text-gray-800 mb-2">
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">
                   No flights found
                 </h3>
-                <p className="text-gray-600 mb-4">
-                  Try adjusting your search filters
+                <p className="text-gray-600">
+                  Try adjusting your search criteria or check back later for new flights.
                 </p>
-                {getTotalPassengers() > 1 && (
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-md mx-auto">
-                    <p className="text-sm text-yellow-800">
-                      💡 <strong>Tip:</strong> Some flights may not have enough available seats for {getTotalPassengers()} passengers. 
-                      Try reducing the number of passengers or check back later.
-                    </p>
-                  </div>
-                )}
               </div>
-            )}
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-              {filteredFlights.map((flight) => {
-                // Determine if this is a departure or return flight for round-trip
-                const isDepartureFlight = tripType === "round-trip" && flight.origin === originFilter && flight.destination === destinationFilter;
-                const isReturnFlight = tripType === "round-trip" && flight.origin === destinationFilter && flight.destination === originFilter;
-                
-                return (
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {filteredFlights.map((flight) => (
                   <div
                     key={flight.id}
-                    className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden group"
+                    className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden cursor-pointer transform hover:scale-105"
+                    onClick={() => handleFlightSelect(flight)}
                   >
-                    <div className="p-6">
-                      {/* Flight Header */}
-                      <div className="flex justify-between items-start mb-4">
+                    {/* Flight Header */}
+                    <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6">
+                      <div className="flex justify-between items-center">
                         <div>
-                          <h3 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
-                            {flight.airline}
+                          <h3 className="text-xl font-bold mb-1">
+                            {flight.airline} - {flight.flight_number}
                           </h3>
-                          <p className="text-sm text-gray-500">
-                            Flight {flight.flight_number}
+                          <p className="text-blue-100">
+                            {flight.origin} → {flight.destination}
                           </p>
-                          {tripType === "round-trip" && (
-                            <p className={`text-xs font-medium mt-1 px-2 py-1 rounded-full inline-block ${
-                              isDepartureFlight 
-                                ? 'bg-blue-100 text-blue-800' 
-                                : isReturnFlight
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-gray-100 text-gray-800'
-                            }`}>
-                              {isDepartureFlight ? '🛫 Departure' : isReturnFlight ? '🛬 Return' : 'Flight'}
-                            </p>
-                          )}
                         </div>
                         <div className="text-right">
-                          <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 text-xs font-medium rounded-full">
+                          <div className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
                             {flight.cabin_class}
-                          </span>
+                          </div>
                         </div>
                       </div>
+                    </div>
 
-                      {/* Route */}
-                      <div className="flex items-center justify-between mb-6">
+                    {/* Flight Details */}
+                    <div className="p-6">
+                      <div className="grid grid-cols-3 gap-4 mb-6">
                         <div className="text-center">
                           <p className="text-2xl font-bold text-gray-900">
                             {formatTime(flight.departure_time)}
                           </p>
-                          <p className="text-sm text-gray-600">{flight.origin}</p>
+                          <p className="text-sm text-gray-600">
+                            {flight.origin}
+                          </p>
                           <p className="text-xs text-gray-500">
                             {formatDate(flight.departure_time)}
                           </p>
@@ -695,7 +653,7 @@ export default function HomePage() {
                         </div>
                       </div>
 
-                      {/* Flight Duration and Available Seats */}
+                      {/* Flight Duration */}
                       <div className="flex justify-between items-center mb-4 px-2">
                         <div className="flex items-center space-x-2">
                           <span className="text-gray-400">⏱️</span>
@@ -718,45 +676,25 @@ export default function HomePage() {
                       </div>
 
                       {/* Price and Book Button */}
-                      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                      <div className="flex justify-between items-center">
                         <div>
-                          <p className="text-sm text-gray-500">Price per passenger</p>
+                          <p className="text-sm text-gray-600">Price per passenger</p>
                           <p className="text-2xl font-bold text-green-600">
                             ₹{flight.price.toLocaleString()}
                           </p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-sm text-gray-500">
                             Total: ₹{(flight.price * getTotalPassengers()).toLocaleString()}
                           </p>
                         </div>
-                        <button
-                          onClick={() => handleFlightSelection(flight)}
-                          className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg ${
-                            tripType === "round-trip" 
-                              ? isDepartureFlight && selectedDepartureFlight?.id === flight.id
-                                ? "bg-green-600 hover:bg-green-700 text-white"
-                                : isReturnFlight && selectedReturnFlight?.id === flight.id
-                                ? "bg-green-600 hover:bg-green-700 text-white"
-                                : "bg-blue-600 hover:bg-blue-700 text-white"
-                              : "bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white"
-                          }`}
-                        >
-                          {tripType === "round-trip" 
-                            ? isDepartureFlight && selectedDepartureFlight?.id === flight.id
-                              ? "✓ Selected (Departure)"
-                              : isReturnFlight && selectedReturnFlight?.id === flight.id
-                              ? "✓ Selected (Return)"
-                              : isDepartureFlight
-                              ? "Select Departure"
-                              : "Select Return"
-                            : "Book Now"
-                          }
+                        <button className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg">
+                          {tripType === "one-way" ? "Book Now" : "Select"}
                         </button>
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

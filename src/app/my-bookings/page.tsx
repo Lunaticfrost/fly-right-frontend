@@ -1,39 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-
-interface Booking {
-  id: string;
-  user_id: string;
-  flight_id: string;
-  passengers: any[];
-  cabin_class: string;
-  total_price: number;
-  trip_type: string;
-  status: string;
-  payment_method: string;
-  payment_status: string;
-  transaction_id: string;
-  paid_at: string;
-  booking_date: string;
-}
-
-interface Flight {
-  id: string;
-  flight_number: string;
-  airline: string;
-  origin: string;
-  destination: string;
-  departure_time: string;
-  arrival_time: string;
-  price: number;
-  cabin_class: string;
-  available_seats?: number;
-}
+import OfflineIndicator from "@/components/OfflineIndicator";
+import { useOfflineData } from "@/hooks/useOfflineData";
+import { Booking, Flight } from "@/lib/indexedDB";
 
 export default function MyBookingsPage() {
+  const { isOnline, getUserBookings, updateBooking } = useOfflineData();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [flights, setFlights] = useState<Record<string, Flight>>({});
   const [loading, setLoading] = useState(true);
@@ -44,40 +18,30 @@ export default function MyBookingsPage() {
 
   useEffect(() => {
     const fetchBookings = async () => {
-      const user = (await supabase.auth.getUser()).data.user;
-      if (!user) {
-        router.push("/auth/login?redirectTo=/my-bookings");
-        return;
+      setLoading(true);
+      try {
+        const bookingData = await getUserBookings();
+        setBookings(bookingData);
+
+        // Fetch related flights from IndexedDB
+        const { indexedDBService } = await import('@/lib/indexedDB');
+        const allFlights = await indexedDBService.getFlights();
+        
+        const flightMap: Record<string, Flight> = {};
+        for (const flight of allFlights) {
+          flightMap[flight.id] = flight;
+        }
+
+        setFlights(flightMap);
+      } catch (error) {
+        console.error("Error fetching bookings:", error);
+      } finally {
+        setLoading(false);
       }
-
-      const { data: bookingData } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("booking_date", { ascending: false });
-
-      setBookings(bookingData || []);
-
-      // Fetch related flights
-      const flightIds = [
-        ...new Set((bookingData || []).map((b) => b.flight_id)),
-      ];
-      const { data: flightData } = await supabase
-        .from("flights")
-        .select("*")
-        .in("id", flightIds);
-
-      const flightMap: Record<string, Flight> = {};
-      for (const flight of flightData || []) {
-        flightMap[flight.id] = flight;
-      }
-
-      setFlights(flightMap);
-      setLoading(false);
     };
 
     fetchBookings();
-  }, []);
+  }, [getUserBookings]);
 
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleTimeString("en-US", {
@@ -153,53 +117,35 @@ export default function MyBookingsPage() {
     try {
       console.log("Cancelling booking:", selectedBooking.id);
       
-      const { data, error } = await supabase
-        .from("bookings")
-        .update({ 
-          status: "cancelled"
-        })
-        .eq("id", selectedBooking.id)
-        .select(); // Add select to get the updated data
-
-      if (error) {
-        console.error("Cancellation error:", error);
-        alert(`Failed to cancel booking: ${error.message}`);
-        return;
-      }
-
+      // Update booking status to cancelled
+      const updatedBooking = { ...selectedBooking, status: "cancelled" };
+      await updateBooking(updatedBooking);
+      
+      // Update local state
+      setBookings(prev => prev.map(booking => 
+        booking.id === selectedBooking.id ? updatedBooking : booking
+      ));
+      
       // Restore seats to the flight after successful cancellation
       const flight = flights[selectedBooking.flight_id];
       if (flight && flight.available_seats !== undefined) {
         const passengerCount = selectedBooking.passengers?.length || 1;
         const newAvailableSeats = flight.available_seats + passengerCount;
         
-        const { error: seatUpdateError } = await supabase
-          .from("flights")
-          .update({ available_seats: newAvailableSeats })
-          .eq("id", selectedBooking.flight_id);
-
-        if (seatUpdateError) {
-          console.error("Failed to restore seat availability:", seatUpdateError);
-          // Note: In a production system, you might want to handle this more gracefully
-          // For now, we'll just log the error since the cancellation was successful
-        }
+        const { indexedDBService } = await import('@/lib/indexedDB');
+        await indexedDBService.updateFlightSeats(selectedBooking.flight_id, newAvailableSeats);
+        
+        // Update local flight data
+        setFlights(prev => ({
+          ...prev,
+          [selectedBooking.flight_id]: {
+            ...flight,
+            available_seats: newAvailableSeats
+          }
+        }));
       }
       
-      console.log("Booking cancelled successfully:", data);
-      
-      // Refresh bookings
-      const { data: bookingData, error: fetchError } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-        .order("booking_date", { ascending: false });
-      
-      if (fetchError) {
-        console.error("Error fetching updated bookings:", fetchError);
-      } else {
-        console.log("Updated bookings:", bookingData);
-        setBookings(bookingData || []);
-      }
+      console.log("Booking cancelled successfully");
       
       setShowCancelModal(false);
       setSelectedBooking(null);
@@ -213,69 +159,20 @@ export default function MyBookingsPage() {
   };
 
   // Open cancellation modal
-  const openCancelModal = (booking: any) => {
+  const openCancelModal = (booking: Booking) => {
     setSelectedBooking(booking);
     setShowCancelModal(true);
-  };
-
-  // Refresh bookings data
-  const refreshBookings = async () => {
-    setLoading(true);
-    try {
-      const { data: bookingData, error } = await supabase
-        .from("bookings")
-        .select("*")
-        .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-        .order("booking_date", { ascending: false });
-
-      if (error) {
-        console.error("Error refreshing bookings:", error);
-      } else {
-        setBookings(bookingData || []);
-      }
-    } catch (error) {
-      console.error("Error refreshing bookings:", error);
-    } finally {
-      setLoading(false);
-    }
   };
 
   if (loading) {
     return (
       <>
         <Header />
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+        <OfflineIndicator />
+        <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
           <div className="text-center">
-            <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-            <p className="mt-4 text-gray-600">Loading your bookings...</p>
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  if (bookings.length === 0) {
-    return (
-      <>
-        <Header />
-        <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-          <div className="max-w-4xl mx-auto px-6 py-12">
-            <div className="text-center bg-white rounded-2xl shadow-xl p-12">
-              <div className="text-6xl mb-6">📋</div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-4">
-                No Bookings Yet
-              </h1>
-              <p className="text-lg text-gray-600 mb-8 max-w-md mx-auto">
-                You haven't made any bookings yet. Start exploring flights and
-                book your next adventure!
-              </p>
-              <button
-                onClick={() => router.push("/")}
-                className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-8 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-              >
-                Search Flights
-              </button>
-            </div>
+            <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading bookings...</p>
           </div>
         </div>
       </>
@@ -285,230 +182,246 @@ export default function MyBookingsPage() {
   return (
     <>
       <Header />
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
-        <div className="max-w-6xl mx-auto px-6 py-8">
+      <OfflineIndicator />
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="container mx-auto px-4 py-8">
           {/* Header */}
-          <div className="text-center mb-12">
-            <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-gray-900 mb-4">
               My Bookings
             </h1>
-            <p className="text-xl text-gray-600 mb-6">
-              Manage and view all your flight reservations
+            <p className="text-lg text-gray-600">
+              Manage and track your flight reservations
             </p>
-            <button
-              onClick={refreshBookings}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg flex items-center mx-auto space-x-2"
-            >
-              <span>🔄</span>
-              <span>Refresh Bookings</span>
-            </button>
+            {!isOnline && (
+              <div className="mt-4 bg-yellow-100 text-yellow-800 px-4 py-2 rounded-full text-sm font-medium inline-block">
+                📱 Offline Mode - Viewing cached bookings
+              </div>
+            )}
           </div>
 
-          {/* Bookings Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {bookings.map((booking) => {
-              const flight = flights[booking.flight_id];
-              const passenger = booking.passengers?.[0] || {};
+          {/* Bookings List */}
+          {bookings.length === 0 ? (
+            <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
+              <div className="text-6xl mb-4">✈️</div>
+              <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                No bookings found
+              </h3>
+              <p className="text-gray-600 mb-6">
+                You haven&apos;t made any bookings yet.
+              </p>
+              <button
+                onClick={() => router.push("/")}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105"
+              >
+                Search Flights
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {bookings.map((booking) => {
+                const flight = flights[booking.flight_id];
 
-              return (
-                <div
-                  key={booking.id}
-                  className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden"
-                >
-                  {/* Booking Header */}
-                  <div className={`p-6 ${
-                    booking.status === "cancelled" 
-                      ? "bg-gradient-to-r from-red-500 to-red-600" 
-                      : "bg-gradient-to-r from-green-500 to-green-600"
-                  } text-white`}>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-xl font-bold mb-1">
-                          {flight?.airline} - {flight?.flight_number}
-                        </h3>
-                        <p className="text-green-100">
-                          {flight?.origin} → {flight?.destination}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <div className={`rounded-full px-3 py-1 text-sm font-medium ${
-                          booking.status === "cancelled"
-                            ? "bg-red-700 text-white"
-                            : "bg-white/20 text-white"
-                        }`}>
-                          {booking.status === "cancelled" ? "❌ Cancelled" : "✅ Confirmed"}
+                return (
+                  <div
+                    key={booking.id}
+                    className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden"
+                  >
+                    {/* Booking Header */}
+                    <div className={`p-6 ${
+                      booking.status === "cancelled" 
+                        ? "bg-gradient-to-r from-red-500 to-red-600" 
+                        : "bg-gradient-to-r from-green-500 to-green-600"
+                    } text-white`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="text-xl font-bold mb-1">
+                            {flight?.airline} - {flight?.flight_number}
+                          </h3>
+                          <p className="text-green-100">
+                            {flight?.origin} → {flight?.destination}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className={`rounded-full px-3 py-1 text-sm font-medium ${
+                            booking.status === "cancelled"
+                              ? "bg-red-700 text-white"
+                              : "bg-white/20 text-white"
+                          }`}>
+                            {booking.status === "cancelled" ? "❌ Cancelled" : "✅ Confirmed"}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  {/* Flight Details */}
-                  <div className="p-6">
-                    <div className="grid grid-cols-2 gap-4 mb-6">
-                      <div className="text-center">
-                        <p className="text-2xl font-bold text-gray-900">
-                          {formatTime(flight?.departure_time)}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          {flight?.origin}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {formatDate(flight?.departure_time)}
-                        </p>
+                    {/* Flight Details */}
+                    <div className="p-6">
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-gray-900">
+                            {formatTime(flight?.departure_time)}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {flight?.origin}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {formatDate(flight?.departure_time)}
+                          </p>
+                        </div>
+
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-gray-900">
+                            {formatTime(flight?.arrival_time)}
+                          </p>
+                          <p className="text-sm text-gray-600">
+                            {flight?.destination}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {formatDate(flight?.arrival_time)}
+                          </p>
+                        </div>
                       </div>
 
-                      <div className="text-center">
-                        <p className="text-2xl font-bold text-gray-900">
-                          {formatTime(flight?.arrival_time)}
-                        </p>
-                        <p className="text-sm text-gray-600">
-                          {flight?.destination}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {formatDate(flight?.arrival_time)}
-                        </p>
+                      {/* Flight Duration */}
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-600">Duration:</span>
+                        <span className="font-medium text-gray-900">
+                          {calculateFlightDuration(flight?.departure_time, flight?.arrival_time)}
+                        </span>
                       </div>
-                    </div>
 
-                    {/* Flight Duration */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-600">Duration:</span>
-                      <span className="font-medium text-gray-900">
-                        {calculateFlightDuration(flight?.departure_time, flight?.arrival_time)}
-                      </span>
-                    </div>
-
-                    {/* Passenger Info */}
-                    <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                      <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
-                        <span className="mr-2">👥</span>
-                        Passenger Details
-                      </h4>
-                      <div className="space-y-3">
-                        {booking.passengers?.map((passenger: any, index: number) => (
-                          <div key={index} className="border-l-4 border-blue-200 pl-3">
-                            <h5 className="font-medium text-gray-900 mb-1">
-                              Passenger {index + 1}
-                            </h5>
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                              <div>
-                                <p className="text-gray-500">Name</p>
-                                <p className="font-medium text-gray-900">
-                                  {passenger.name}
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-gray-500">Age</p>
-                                <p className="font-medium text-gray-900">
-                                  {passenger.age} yrs
-                                </p>
-                              </div>
-                              <div>
-                                <p className="text-gray-500">Gender</p>
-                                <p className="font-medium text-gray-900">
-                                  {passenger.gender}
-                                </p>
+                      {/* Passenger Info */}
+                      <div className="bg-gray-50 rounded-lg p-4 mb-6">
+                        <h4 className="font-semibold text-gray-800 mb-2 flex items-center">
+                          <span className="mr-2">👥</span>
+                          Passenger Details
+                        </h4>
+                        <div className="space-y-3">
+                          {booking.passengers?.map((passenger, index: number) => (
+                            <div key={index} className="border-l-4 border-blue-200 pl-3">
+                              <h5 className="font-medium text-gray-900 mb-1">
+                                Passenger {index + 1}
+                              </h5>
+                              <div className="grid grid-cols-3 gap-4 text-sm">
+                                <div>
+                                  <p className="text-gray-500">Name</p>
+                                  <p className="font-medium text-gray-900">
+                                    {passenger.name}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500">Age</p>
+                                  <p className="font-medium text-gray-900">
+                                    {passenger.age} yrs
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-gray-500">Gender</p>
+                                  <p className="font-medium text-gray-900">
+                                    {passenger.gender}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
+
+                      {/* Booking Info */}
+                      <div className="space-y-3 mb-6">
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Cabin Class:</span>
+                          <span className="font-medium text-gray-900">
+                            {booking.cabin_class}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Total Paid:</span>
+                          <span className="text-xl font-bold text-green-600">
+                            ₹{booking.total_price.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Booking ID:</span>
+                          <span className="font-mono text-sm text-gray-700">
+                            {booking.id}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Booked On:</span>
+                          <span className="text-sm text-gray-700">
+                            {new Date(booking.booking_date).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex space-x-3">
+                        <button
+                          className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                          onClick={() =>
+                            router.push(
+                              `/booking-success?bookingId=${booking.id}`
+                            )
+                          }
+                        >
+                          View E-Ticket
+                        </button>
+                      </div>
+
+                      {/* Modify and Cancel Actions */}
+                      {booking.status === "confirmed" && (
+                        <div className="flex space-x-3 mt-3">
+                          {canModifyBooking(flight?.departure_time) ? (
+                            <button
+                              className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                              onClick={() => router.push(`/modify-booking/${booking.id}`)}
+                            >
+                              Modify Booking
+                            </button>
+                          ) : (
+                            <button
+                              className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
+                              disabled
+                              title="Modification not allowed within 24 hours of departure"
+                            >
+                              Modify (24h limit)
+                            </button>
+                          )}
+                          
+                          {canCancelBooking(flight?.departure_time) ? (
+                            <button
+                              className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                              onClick={() => openCancelModal(booking)}
+                            >
+                              Cancel Booking
+                            </button>
+                          ) : (
+                            <button
+                              className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
+                              disabled
+                              title="Cancellation not allowed within 2 hours of departure"
+                            >
+                              Cancel (2h limit)
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Cancelled Booking Notice */}
+                      {booking.status === "cancelled" && (
+                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <p className="text-sm text-red-800 font-medium">
+                            ❌ This booking has been cancelled
+                          </p>
+                        </div>
+                      )}
                     </div>
-
-                    {/* Booking Info */}
-                    <div className="space-y-3 mb-6">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Cabin Class:</span>
-                        <span className="font-medium text-gray-900">
-                          {booking.cabin_class}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Total Paid:</span>
-                        <span className="text-xl font-bold text-green-600">
-                          ₹{booking.total_price.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Booking ID:</span>
-                        <span className="font-mono text-sm text-gray-700">
-                          {booking.id}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Booked On:</span>
-                        <span className="text-sm text-gray-700">
-                          {new Date(booking.booking_date).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex space-x-3">
-                      <button
-                        className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-                        onClick={() =>
-                          router.push(
-                            `/booking-success?bookingId=${booking.id}`
-                          )
-                        }
-                      >
-                        View E-Ticket
-                      </button>
-                    </div>
-
-                    {/* Modify and Cancel Actions */}
-                    {booking.status === "confirmed" && (
-                      <div className="flex space-x-3 mt-3">
-                        {canModifyBooking(flight?.departure_time) ? (
-                          <button
-                            className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-                            onClick={() => router.push(`/modify-booking/${booking.id}`)}
-                          >
-                            Modify Booking
-                          </button>
-                        ) : (
-                          <button
-                            className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
-                            disabled
-                            title="Modification not allowed within 24 hours of departure"
-                          >
-                            Modify (24h limit)
-                          </button>
-                        )}
-                        
-                        {canCancelBooking(flight?.departure_time) ? (
-                          <button
-                            className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-                            onClick={() => openCancelModal(booking)}
-                          >
-                            Cancel Booking
-                          </button>
-                        ) : (
-                          <button
-                            className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
-                            disabled
-                            title="Cancellation not allowed within 2 hours of departure"
-                          >
-                            Cancel (2h limit)
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Cancelled Booking Notice */}
-                    {booking.status === "cancelled" && (
-                      <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                        <p className="text-sm text-red-800 font-medium">
-                          ❌ This booking has been cancelled
-                        </p>
-                      </div>
-                    )}
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
