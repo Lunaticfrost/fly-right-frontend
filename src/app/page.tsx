@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import OfflineIndicator from "@/components/OfflineIndicator";
 import { useOfflineData } from "@/hooks/useOfflineData";
+import { useFlightFilterWorker } from "@/hooks/useFlightFilterWorker";
 import { Flight } from "@/lib/indexedDB";
 
 interface PassengerCount {
@@ -23,11 +24,13 @@ interface ValidationErrors {
 export default function HomePage() {
   const router = useRouter();
   const { isOnline, getFlights, searchFlights } = useOfflineData();
+  const { filterFlights: filterFlightsWithWorker } = useFlightFilterWorker();
   
   const [flights, setFlights] = useState<Flight[]>([]);
   const [filteredFlights, setFilteredFlights] = useState<Flight[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
+  const [filtering, setFiltering] = useState(false);
 
   // Filters
   const [originFilter, setOriginFilter] = useState("");
@@ -171,44 +174,29 @@ export default function HomePage() {
 
   // Update filtered flights whenever filters change
   useEffect(() => {
-    const filtered = flights.filter((flight) => {
-      // Convert flight departure time to local date string (YYYY-MM-DD format)
-      const flightDate = new Date(flight.departure_time);
-      const flightDateString = flightDate.toLocaleDateString('en-CA'); // en-CA gives YYYY-MM-DD format
-      
-      // Check available seats if the field exists
-      const totalPassengers = getTotalPassengers();
-      const hasEnoughSeats = !flight.available_seats || flight.available_seats >= totalPassengers;
-      
-      // For round-trip, we need to check both departure and return flights
-      if (tripType === "round-trip") {
-        // Check if this is a departure flight (origin to destination)
-        const isDepartureFlight = flight.origin === originFilter && flight.destination === destinationFilter;
-        // Check if this is a return flight (destination to origin)
-        const isReturnFlight = flight.origin === destinationFilter && flight.destination === originFilter;
-        
-        const departureDateMatch = !departureDateFilter || flightDateString === departureDateFilter;
-        const returnDateMatch = !returnDateFilter || flightDateString === returnDateFilter;
-        
-        return (
-          (originFilter && destinationFilter) && // Both origin and destination must be selected
-          (isDepartureFlight || isReturnFlight) && // Must be either departure or return flight
-          ((isDepartureFlight && departureDateMatch) || (isReturnFlight && returnDateMatch)) && // Date must match
-          (!cabinClassFilter || flight.cabin_class === cabinClassFilter) &&
-          hasEnoughSeats // Check available seats
-        );
-      } else {
-        // One-way flight filtering
-        return (
-          (!originFilter || flight.origin === originFilter) &&
-          (!destinationFilter || flight.destination === destinationFilter) &&
-          (!departureDateFilter || flightDateString === departureDateFilter) &&
-          (!cabinClassFilter || flight.cabin_class === cabinClassFilter) &&
-          hasEnoughSeats // Check available seats
-        );
+    const applyFilters = async () => {
+      setFiltering(true);
+      try {
+        const filtered = await filterFlightsWithWorker(flights, {
+          originFilter,
+          destinationFilter,
+          departureDateFilter,
+          returnDateFilter,
+          tripType,
+          cabinClassFilter,
+          passengerCount,
+        });
+        setFilteredFlights(filtered);
+      } catch (error) {
+        console.error('Error filtering flights:', error);
+        // Fallback to showing all flights
+        setFilteredFlights(flights);
+      } finally {
+        setFiltering(false);
       }
-    });
-    setFilteredFlights(filtered);
+    };
+
+    applyFilters();
   }, [
     originFilter,
     destinationFilter,
@@ -218,6 +206,7 @@ export default function HomePage() {
     cabinClassFilter,
     flights,
     passengerCount,
+    filterFlightsWithWorker,
   ]);
 
   // Unique origin/destination lists
@@ -571,16 +560,24 @@ export default function HomePage() {
           <div className="mb-8">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-gray-900">
-                {filteredFlights.length} Flights Found
+                {filtering ? "Filtering..." : `${filteredFlights.length} Flights Found`}
               </h2>
-              {!isOnline && (
-                <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">
-                  📱 Offline Mode - Cached Results
-                </div>
-              )}
+              <div className="flex items-center space-x-2">
+                {filtering && (
+                  <div className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    <span className="text-sm text-gray-600">Filtering...</span>
+                  </div>
+                )}
+                {!isOnline && (
+                  <div className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">
+                    📱 Offline Mode - Cached Results
+                  </div>
+                )}
+              </div>
             </div>
 
-            {filteredFlights.length === 0 ? (
+            {filteredFlights.length === 0 && !filtering ? (
               <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
                 <div className="text-6xl mb-4">✈️</div>
                 <h3 className="text-xl font-semibold text-gray-900 mb-2">
