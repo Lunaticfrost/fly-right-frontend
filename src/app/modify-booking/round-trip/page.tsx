@@ -1,8 +1,9 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { useSearchParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+import LoadingButton from "@/components/LoadingButton";
 
 interface Booking {
   id: string;
@@ -43,7 +44,7 @@ interface ValidationErrors {
   passengers?: { [key: number]: { name?: string; age?: string; gender?: string } };
 }
 
-export default function RoundTripModifyBookingPage() {
+function RoundTripModifyBookingContent() {
   const searchParams = useSearchParams();
   const departureId = searchParams.get("departureId");
   const returnId = searchParams.get("returnId");
@@ -693,23 +694,41 @@ export default function RoundTripModifyBookingPage() {
 
             {/* Action Buttons */}
             <div className="flex space-x-4">
-              <button
+              <LoadingButton
                 onClick={() => router.push("/my-bookings")}
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+                variant="secondary"
+                className="flex-1"
               >
                 Cancel
-              </button>
-              <button
+              </LoadingButton>
+              <LoadingButton
                 onClick={handleSaveChanges}
-                disabled={!isFormValid() || saving}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+                loading={saving}
+                loadingText="Saving Changes..."
+                disabled={!isFormValid()}
+                className="flex-1"
               >
-                {saving ? "Saving Changes..." : "Save Changes"}
-              </button>
+                Save Changes
+              </LoadingButton>
             </div>
           </div>
         </div>
       </div>
     </>
+  );
+}
+
+export default function RoundTripModifyBookingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading booking details...</p>
+        </div>
+      </div>
+    }>
+      <RoundTripModifyBookingContent />
+    </Suspense>
   );
 } 
