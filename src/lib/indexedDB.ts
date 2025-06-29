@@ -65,7 +65,6 @@ class IndexedDBService {
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('IndexedDB opened successfully');
         resolve();
       };
 
@@ -98,7 +97,6 @@ class IndexedDBService {
           searchStore.createIndex('expires_at', 'expires_at', { unique: false });
         }
 
-        console.log('IndexedDB schema created/updated');
       };
     });
   }

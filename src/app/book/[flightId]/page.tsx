@@ -274,7 +274,6 @@ export default function BookingPage() {
       if (bookingId) {
         try {
           await Notifications.onBookingCreated(bookingId);
-          console.log('Booking confirmation email sent successfully');
         } catch (emailError) {
           console.error('Failed to send booking confirmation email:', emailError);
           // Don't block the booking process if email fails

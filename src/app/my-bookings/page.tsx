@@ -117,13 +117,6 @@ export default function MyBookingsPage() {
     
     setCancelling(true);
     try {
-      console.log("Cancelling booking:", selectedBooking.id);
-      console.log("Selected booking details:", {
-        id: selectedBooking.id,
-        trip_type: selectedBooking.trip_type,
-        transaction_id: selectedBooking.transaction_id,
-        status: selectedBooking.status
-      });
       
       // Check if this is part of a round-trip booking
       const isRoundTrip = selectedBooking.trip_type === 'round-trip';
@@ -134,32 +127,23 @@ export default function MyBookingsPage() {
         const currentTransactionId = selectedBooking.transaction_id;
         const isDeparture = currentTransactionId?.includes('_dep');
         
-        console.log('Round-trip cancellation:', {
-          currentTransactionId,
-          isDeparture
-        });
-        
         if (isDeparture) {
           const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
           relatedBooking = bookings.find(b => b.transaction_id === returnTransactionId);
-          console.log('Looking for return booking to cancel:', returnTransactionId, 'Found:', relatedBooking);
         } else {
           const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
           relatedBooking = bookings.find(b => b.transaction_id === departureTransactionId);
-          console.log('Looking for departure booking to cancel:', departureTransactionId, 'Found:', relatedBooking);
         }
       }
       
       // Cancel the selected booking
       const updatedBooking = { ...selectedBooking, status: "cancelled" };
-      console.log('Cancelling selected booking:', updatedBooking);
       await updateBooking(updatedBooking);
       
       // Cancel the related booking if it's a round-trip
       let updatedRelatedBooking: Booking | undefined;
       if (relatedBooking) {
         updatedRelatedBooking = { ...relatedBooking, status: "cancelled" };
-        console.log('Cancelling related booking:', updatedRelatedBooking);
         await updateBooking(updatedRelatedBooking);
       }
       
@@ -170,20 +154,11 @@ export default function MyBookingsPage() {
         return booking;
       }));
       
-      console.log('Local state updated');
-      
       // Restore seats to both flights after successful cancellation
       const flight = flights[selectedBooking.flight_id];
       if (flight && flight.available_seats !== undefined) {
         const passengerCount = selectedBooking.passengers?.length || 1;
         const newAvailableSeats = flight.available_seats + passengerCount;
-        
-        console.log('Restoring seats for selected flight:', {
-          flightId: selectedBooking.flight_id,
-          currentSeats: flight.available_seats,
-          newSeats: newAvailableSeats,
-          passengerCount
-        });
         
         const { indexedDBService } = await import('@/lib/indexedDB');
         await indexedDBService.updateFlightSeats(selectedBooking.flight_id, newAvailableSeats);
@@ -205,13 +180,6 @@ export default function MyBookingsPage() {
           const passengerCount = relatedBooking.passengers?.length || 1;
           const newAvailableSeats = relatedFlight.available_seats + passengerCount;
           
-          console.log('Restoring seats for related flight:', {
-            flightId: relatedBooking.flight_id,
-            currentSeats: relatedFlight.available_seats,
-            newSeats: newAvailableSeats,
-            passengerCount
-          });
-          
           const { indexedDBService } = await import('@/lib/indexedDB');
           await indexedDBService.updateFlightSeats(relatedBooking.flight_id, newAvailableSeats);
           
@@ -226,8 +194,6 @@ export default function MyBookingsPage() {
         }
       }
       
-      console.log("Booking cancelled successfully");
-      
       setShowCancelModal(false);
       setSelectedBooking(null);
       setRelatedBooking(null);
@@ -238,7 +204,6 @@ export default function MyBookingsPage() {
         try {
           const refreshedBookings = await getUserBookings();
           setBookings(refreshedBookings);
-          console.log('Bookings refreshed after cancellation:', refreshedBookings.length);
         } catch (error) {
           console.error('Error refreshing bookings:', error);
         }
@@ -295,8 +260,7 @@ export default function MyBookingsPage() {
   };
 
   // Group bookings by round-trip pairs
-  const groupBookings = (bookings: Booking[]) => {
-    console.log('Grouping bookings:', bookings);
+  const groupBookings = (bookings: Booking[]) => {  
     
     const groupedBookings: Array<{
       type: 'single' | 'round-trip';
@@ -310,21 +274,10 @@ export default function MyBookingsPage() {
     for (const booking of bookings) {
       if (processedIds.has(booking.id)) continue;
 
-      console.log('Processing booking:', {
-        id: booking.id,
-        trip_type: booking.trip_type,
-        transaction_id: booking.transaction_id
-      });
-
       if (booking.trip_type === 'round-trip') {
         // Find the related booking (departure or return)
         const currentTransactionId = booking.transaction_id;
         const isDeparture = currentTransactionId?.includes('_dep');
-        
-        console.log('Round-trip booking found:', {
-          currentTransactionId,
-          isDeparture
-        });
         
         let relatedBooking: Booking | undefined;
         
@@ -332,12 +285,10 @@ export default function MyBookingsPage() {
           // This is departure, find return
           const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
           relatedBooking = bookings.find(b => b.transaction_id === returnTransactionId);
-          console.log('Looking for return booking:', returnTransactionId, 'Found:', relatedBooking);
         } else {
           // This is return, find departure
           const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
           relatedBooking = bookings.find(b => b.transaction_id === departureTransactionId);
-          console.log('Looking for departure booking:', departureTransactionId, 'Found:', relatedBooking);
         }
 
         if (relatedBooking) {
@@ -345,12 +296,6 @@ export default function MyBookingsPage() {
           const departure = isDeparture ? booking : relatedBooking;
           const returnBooking = isDeparture ? relatedBooking : booking;
           const totalPrice = departure.total_price + returnBooking.total_price;
-
-          console.log('Grouping round-trip bookings:', {
-            departure: departure.id,
-            return: returnBooking.id,
-            totalPrice
-          });
 
           groupedBookings.push({
             type: 'round-trip',
@@ -363,7 +308,6 @@ export default function MyBookingsPage() {
           processedIds.add(relatedBooking.id);
         } else {
           // No related booking found, treat as single
-          console.log('No related booking found, treating as single');
           groupedBookings.push({
             type: 'single',
             departure: booking,
@@ -373,7 +317,6 @@ export default function MyBookingsPage() {
         }
       } else {
         // Single booking
-        console.log('Single booking:', booking.id);
         groupedBookings.push({
           type: 'single',
           departure: booking,
@@ -383,7 +326,6 @@ export default function MyBookingsPage() {
       }
     }
 
-    console.log('Final grouped bookings:', groupedBookings);
     return groupedBookings;
   };
 

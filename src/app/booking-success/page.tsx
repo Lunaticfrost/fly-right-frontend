@@ -87,15 +87,6 @@ function BookingSuccessContent() {
         const isRoundTripBooking = isRoundTrip || bookingData.trip_type === "round-trip";
         setIsRoundTripBooking(isRoundTripBooking);
         
-        console.log('Round trip detection:', { 
-          isRoundTrip, 
-          tripType: bookingData.trip_type, 
-          isRoundTripBooking,
-          transactionId: bookingData.transaction_id,
-          bookingId: bookingData.id,
-          userId: bookingData.user_id
-        });
-        
         if (isRoundTripBooking) {
           // Debug: Check all round-trip bookings for this user
           const { data: allRoundTripBookings } = await supabase
@@ -104,25 +95,16 @@ function BookingSuccessContent() {
             .eq("user_id", bookingData.user_id)
             .eq("trip_type", "round-trip");
             
-          console.log('All round-trip bookings for user:', allRoundTripBookings);
-          
           // Find the return booking for this user with round-trip type
           // Use transaction ID pattern to link departure and return bookings
           const currentTransactionId = bookingData.transaction_id;
           const isDeparture = currentTransactionId?.includes('_dep');
-          
-          console.log('Transaction analysis:', {
-            currentTransactionId,
-            isDeparture
-          });
           
           let returnBookingData = null;
           
           if (isDeparture) {
             // This is departure booking, find the return booking
             const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
-            
-            console.log('Looking for return booking with transaction ID:', returnTransactionId);
             
             const { data: returnData } = await supabase
               .from("bookings")
@@ -136,8 +118,6 @@ function BookingSuccessContent() {
             // This is return booking, find the departure booking
             const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
             
-            console.log('Looking for departure booking with transaction ID:', departureTransactionId);
-            
             const { data: departureData } = await supabase
               .from("bookings")
               .select("*")
@@ -147,8 +127,6 @@ function BookingSuccessContent() {
               
             returnBookingData = departureData;
           }
-
-          console.log('Return booking data:', returnBookingData);
 
           if (returnBookingData) {
             setReturnBooking(returnBookingData);
@@ -160,11 +138,9 @@ function BookingSuccessContent() {
               .eq("id", returnBookingData.flight_id)
               .single();
 
-            console.log('Return flight data:', returnFlightData);
             setReturnFlight(returnFlightData);
           } else {
             // Fallback: try to find by booking date proximity
-            console.log('Trying fallback method to find return booking...');
             
             const bookingDate = new Date(bookingData.booking_date);
             const timeWindow = 5 * 60 * 1000; // 5 minutes window
@@ -178,8 +154,6 @@ function BookingSuccessContent() {
               .gte("booking_date", new Date(bookingDate.getTime() - timeWindow).toISOString())
               .lte("booking_date", new Date(bookingDate.getTime() + timeWindow).toISOString());
 
-            console.log('Nearby bookings:', nearbyBookings);
-            
             if (nearbyBookings && nearbyBookings.length > 0) {
               const returnBooking = nearbyBookings[0];
               setReturnBooking(returnBooking);
@@ -190,7 +164,6 @@ function BookingSuccessContent() {
                 .eq("id", returnBooking.flight_id)
                 .single();
 
-              console.log('Return flight data (fallback):', returnFlightData);
               setReturnFlight(returnFlightData);
             }
           }
@@ -207,10 +180,8 @@ function BookingSuccessContent() {
     if (!booking?.flight_id) return
   
     const eventSource = new EventSource(`/api/flight-status/${booking.flight_id}`)
-    console.log("Connecting to SSE for flight:", booking.flight_id)
   
     eventSource.onmessage = (event) => {
-      console.log("SSE message received:", event.data)
       if (event.data !== 'ping') {
         setFlightStatus(event.data)
       }
@@ -221,12 +192,10 @@ function BookingSuccessContent() {
       setFlightStatus('Connection Error')
     }
 
-    eventSource.onopen = () => {
-      console.log("SSE connection opened")
+    eventSource.onopen = () => {    
     }
   
     return () => {
-      console.log("Closing SSE connection")
       eventSource.close()
     }
   }, [booking])

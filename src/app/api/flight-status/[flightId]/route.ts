@@ -23,23 +23,18 @@ export async function GET(
   const params = await context.params;
   const flightId = params.flightId;
 
-  console.log('SSE API called for flightId:', flightId);
-
   // Set up SSE headers
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
       // Send initial status
       try {
-        console.log('Fetching flight status for:', flightId);
         
         const { data: flight, error } = await supabase
           .from('flights')
           .select('*')
           .eq('id', flightId)
           .single();
-
-        console.log('Supabase response:', { flight, error });
 
         if (error) {
           console.error('Error fetching flight status:', error);
@@ -50,7 +45,6 @@ export async function GET(
         } else {
           // Check if flightStatus field exists, otherwise use a default
           const status = (flight as Flight).status || 'Scheduled';
-          console.log('Sending initial status:', status, 'Available fields:', Object.keys(flight));
           controller.enqueue(encoder.encode(`data: ${status}\n\n`));
         }
       } catch (error) {
@@ -60,7 +54,6 @@ export async function GET(
 
       // Set up real-time subscription
       try {
-        console.log('Setting up real-time subscription for flight:', flightId);
         
         let previousStatus = 'Scheduled';
         
@@ -75,15 +68,12 @@ export async function GET(
               filter: `id=eq.${flightId}`,
             },
             async (payload) => {
-              console.log('Real-time payload received:', payload);
               const newStatus = (payload.new as Flight)?.status || 'Scheduled';
-              console.log('Flight status updated via real-time:', newStatus);
               
               // Send email notification if status changed
               if (newStatus !== previousStatus) {
                 try {
                   await Notifications.onFlightStatusChanged(flightId, previousStatus, newStatus);
-                  console.log('Flight status change notification sent');
                 } catch (notificationError) {
                   console.error('Failed to send flight status notification:', notificationError);
                 }
@@ -94,7 +84,6 @@ export async function GET(
             }
           )
           .subscribe((status, error) => {
-            console.log('Subscription status:', status);
             if (error) {
               console.error('Subscription error:', error);
               controller.enqueue(encoder.encode(`data: Subscription Error: ${error.message}\n\n`));
@@ -117,12 +106,10 @@ export async function GET(
               .single();
             
             if (!error && currentFlight && (currentFlight as Flight).status !== lastStatus) {
-              console.log('Status changed via polling:', (currentFlight as Flight).status);
               
               // Send email notification if status changed
               try {
                 await Notifications.onFlightStatusChanged(flightId, lastStatus, (currentFlight as Flight).status || 'Scheduled');
-                console.log('Flight status change notification sent via polling');
               } catch (notificationError) {
                 console.error('Failed to send flight status notification:', notificationError);
               }
@@ -137,7 +124,6 @@ export async function GET(
 
         // Cleanup function
         return () => {
-          console.log('Cleaning up SSE connection for flight:', flightId);
           clearInterval(keepAlive);
           clearInterval(pollStatus);
           subscription.unsubscribe();

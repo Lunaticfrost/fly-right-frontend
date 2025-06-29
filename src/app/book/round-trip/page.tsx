@@ -350,7 +350,6 @@ function RoundTripBookingContent() {
       if (departureBookingId && returnBookingId) {
         try {
           await Notifications.onRoundTripBookingCreated(departureBookingId, returnBookingId);
-          console.log('Round-trip booking confirmation email sent successfully');
         } catch (emailError) {
           console.error('Failed to send round-trip booking confirmation email:', emailError);
           // Don't block the booking process if email fails

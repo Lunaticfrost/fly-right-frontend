@@ -494,8 +494,7 @@ export const sendEmail = async (
       text: template.text,
     }
 
-    const info = await transporter.sendMail(mailOptions)
-    console.log('Email sent successfully:', info.messageId)
+    await transporter.sendMail(mailOptions)
     return true
   } catch (error) {
     console.error('Error sending email:', error)
@@ -726,7 +725,6 @@ export const sendRoundTripBookingConfirmation = async (data: RoundTripBookingCon
 export const verifyEmailConfig = async (): Promise<boolean> => {
   try {
     await transporter.verify()
-    console.log('Email configuration is valid')
     return true
   } catch (error) {
     console.error('Email configuration error:', error)

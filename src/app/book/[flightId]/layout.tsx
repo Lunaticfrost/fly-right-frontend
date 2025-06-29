@@ -25,9 +25,7 @@ export default async function BookingLayout({
               cookieStore.set(name, value, options)
             )
           } catch {
-            // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
+            // ignore
           }
         },
       },
@@ -35,13 +33,10 @@ export default async function BookingLayout({
   )
 
   const { flightId } = await params;
-  console.log('FLIGHT ID', flightId)
 
   const {
     data: { session },
   } = await supabase.auth.getSession()
-
-  console.log('SESSION', session)
 
   if (!session) {
     redirect(`/auth/login?redirectTo=/book/${flightId}`)

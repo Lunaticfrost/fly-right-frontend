@@ -11,12 +11,10 @@ export const useOfflineData = () => {
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      console.log('App is now online');
     };
 
     const handleOffline = () => {
       setIsOnline(false);
-      console.log('App is now offline');
     };
 
     window.addEventListener('online', handleOnline);
@@ -52,7 +50,6 @@ export const useOfflineData = () => {
 
       if (flights) {
         await indexedDBService.storeFlights(flights);
-        console.log('Flights synced to IndexedDB:', flights.length);
       }
     } catch (error) {
       console.error('Error syncing flights:', error);
@@ -77,7 +74,6 @@ export const useOfflineData = () => {
 
       if (bookings) {
         await indexedDBService.storeBookings(bookings);
-        console.log('User bookings synced to IndexedDB:', bookings.length);
       }
     } catch (error) {
       console.error('Error syncing user bookings:', error);
@@ -98,7 +94,6 @@ export const useOfflineData = () => {
       };
 
       await indexedDBService.storeUser(userData);
-      console.log('User data synced to IndexedDB');
     } catch (error) {
       console.error('Error syncing user data:', error);
     }
@@ -109,7 +104,6 @@ export const useOfflineData = () => {
     if (!isOnline || isSyncing) return;
 
     setIsSyncing(true);
-    console.log('Starting data sync...');
 
     try {
       await Promise.all([
@@ -119,7 +113,6 @@ export const useOfflineData = () => {
       ]);
 
       setLastSyncTime(new Date());
-      console.log('Data sync completed');
     } catch (error) {
       console.error('Error during data sync:', error);
     } finally {
@@ -198,7 +191,6 @@ export const useOfflineData = () => {
     // Check cache first
     const cachedResult = await indexedDBService.getSearchResult(query);
     if (cachedResult) {
-      console.log('Returning cached search results');
       return cachedResult.results;
     }
 
@@ -253,7 +245,6 @@ export const useOfflineData = () => {
         console.error('Error updating booking online:', error);
       }
     } else {
-      console.log('Booking updated offline, will sync when online');
     }
   }, [isOnline]);
 

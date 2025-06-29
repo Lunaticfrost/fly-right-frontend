@@ -302,9 +302,6 @@ Enable debug logging:
 
 ```typescript
 // In email service
-console.log('Email configuration:', emailConfig)
-console.log('Sending email to:', to)
-console.log('Email template:', template)
 ```
 
 ## Future Enhancements

@@ -32,7 +32,6 @@ export default function BookingsPage() {
   const fetchBookings = async () => {
     try {
       setLoading(true);
-      console.log('Fetching bookings...');
       
       // First, fetch all bookings - remove created_at ordering since column doesn't exist
       const { data: bookingsData, error: bookingsError } = await supabase
@@ -44,10 +43,7 @@ export default function BookingsPage() {
         throw bookingsError;
       }
 
-      console.log('Bookings fetched:', bookingsData?.length || 0);
-
       if (!bookingsData || bookingsData.length === 0) {
-        console.log('No bookings found');
         setBookings([]);
         return;
       }
@@ -56,7 +52,6 @@ export default function BookingsPage() {
       const sortedBookings = bookingsData.sort((a, b) => b.id.localeCompare(a.id));
 
       // Then, fetch flight details for each booking with error handling
-      console.log('Fetching flight details for bookings...');
       const bookingsWithFlights = await Promise.all(
         sortedBookings.map(async (booking) => {
           try {
@@ -88,7 +83,6 @@ export default function BookingsPage() {
         })
       );
 
-      console.log('Bookings with flights processed:', bookingsWithFlights.length);
       setBookings(bookingsWithFlights);
     } catch (error) {
       console.error('Error fetching bookings:', error);
