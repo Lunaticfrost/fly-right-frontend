@@ -2,11 +2,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Header from "@/components/Header";
-import OfflineIndicator from "@/components/OfflineIndicator";
 import { useOfflineData } from "@/hooks/useOfflineData";
 import { useFlightFilterWorker } from "@/hooks/useFlightFilterWorker";
 import { Flight } from "@/lib/indexedDB";
 import { supabase } from "@/lib/supabase";
+import LoadingButton from '@/components/LoadingButton'
 
 interface PassengerCount {
   adults: number;
@@ -376,7 +376,6 @@ export default function HomePage() {
     return (
       <>
         <Header />
-        {/* <OfflineIndicator /> */}
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
           <div className="text-center">
             <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto mb-4"></div>
@@ -390,7 +389,6 @@ export default function HomePage() {
   return (
     <>
       <Header />
-      {/* <OfflineIndicator /> */}
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
         {/* Hero Section */}
         <div className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-16">
@@ -628,26 +626,23 @@ export default function HomePage() {
 
               {/* Search and Clear Buttons */}
               <div className="lg:col-span-2 flex space-x-4">
-                <button
+                <LoadingButton
                   onClick={handleSearch}
+                  loading={searching}
+                  loadingText="Searching..."
                   disabled={searching}
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1"
+                  size="lg"
                 >
-                  {searching ? (
-                    <span className="flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      Searching...
-                    </span>
-                  ) : (
-                    "🔍 Search Flights"
-                  )}
-                </button>
-                <button
+                  🔍 Search Flights
+                </LoadingButton>
+                <LoadingButton
                   onClick={clearFilters}
-                  className="px-8 bg-gray-500 hover:bg-gray-600 text-white py-4 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+                  variant="secondary"
+                  size="lg"
                 >
                   Clear
-                </button>
+                </LoadingButton>
               </div>
             </div>
           </div>

@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
 import { Notifications } from "@/lib/notifications";
+import LoadingButton from "@/components/LoadingButton";
 
 interface Flight {
   id: string;
@@ -38,6 +39,7 @@ function RoundTripBookingContent() {
   const [departureFlight, setDepartureFlight] = useState<Flight | null>(null);
   const [returnFlight, setReturnFlight] = useState<Flight | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bookingLoading, setBookingLoading] = useState(false);
   const [passengers, setPassengers] = useState<Passenger[]>([
     { name: "", age: "", gender: "" }
   ]);
@@ -254,93 +256,91 @@ function RoundTripBookingContent() {
       return;
     }
 
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) {
-      alert("Not logged in.");
-      return;
-    }
-
-    // Check seat availability for both flights before booking
-    if (departureFlight!.available_seats !== undefined && departureFlight!.available_seats < passengers.length) {
-      alert(`Sorry, only ${departureFlight!.available_seats} seats are available for the departure flight. Please reduce the number of passengers or choose a different flight.`);
-      return;
-    }
-
-    if (returnFlight!.available_seats !== undefined && returnFlight!.available_seats < passengers.length) {
-      alert(`Sorry, only ${returnFlight!.available_seats} seats are available for the return flight. Please reduce the number of passengers or choose a different flight.`);
-      return;
-    }
-
-    // Create departure booking
-    const departureBooking = {
-      user_id: user.id,
-      flight_id: departureFlightId,
-      passengers: passengers,
-      cabin_class: departureFlight!.cabin_class,
-      total_price: departureFlight!.price * passengers.length,
-      trip_type: "round-trip",
-      status: "confirmed",
-      payment_method: "card",
-      payment_status: "success",
-      transaction_id: `txn_${Date.now()}_dep`,
-      paid_at: new Date().toISOString(),
-    };
-
-    // Create return booking
-    const returnBooking = {
-      user_id: user.id,
-      flight_id: returnFlightId,
-      passengers: passengers,
-      cabin_class: returnFlight!.cabin_class,
-      total_price: returnFlight!.price * passengers.length,
-      trip_type: "round-trip",
-      status: "confirmed",
-      payment_method: "card",
-      payment_status: "success",
-      transaction_id: `txn_${Date.now()}_ret`,
-      paid_at: new Date().toISOString(),
-    };
-
+    setBookingLoading(true);
     try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) {
+        alert("Not logged in.");
+        return;
+      }
+
+      // Check seat availability for both flights
+      if (departureFlight!.available_seats !== undefined && departureFlight!.available_seats < passengers.length) {
+        alert(`Sorry, only ${departureFlight!.available_seats} seats are available for the departure flight. Please reduce the number of passengers or choose a different flight.`);
+        return;
+      }
+
+      if (returnFlight!.available_seats !== undefined && returnFlight!.available_seats < passengers.length) {
+        alert(`Sorry, only ${returnFlight!.available_seats} seats are available for the return flight. Please reduce the number of passengers or choose a different flight.`);
+        return;
+      }
+
+      // Create departure booking
+      const departureBooking = {
+        user_id: user.id,
+        flight_id: departureFlightId!,
+        passengers: passengers,
+        cabin_class: departureFlight!.cabin_class,
+        total_price: departureFlight!.price * passengers.length,
+        trip_type: "round-trip",
+        status: "confirmed",
+        payment_method: "card",
+        payment_status: "success",
+        transaction_id: `txn_dep_${Date.now()}`,
+        paid_at: new Date().toISOString(),
+      };
+
+      // Create return booking
+      const returnBooking = {
+        user_id: user.id,
+        flight_id: returnFlightId!,
+        passengers: passengers,
+        cabin_class: returnFlight!.cabin_class,
+        total_price: returnFlight!.price * passengers.length,
+        trip_type: "round-trip",
+        status: "confirmed",
+        payment_method: "card",
+        payment_status: "success",
+        transaction_id: `txn_ret_${Date.now()}`,
+        paid_at: new Date().toISOString(),
+      };
+
       // Insert both bookings
       const { data: departureData, error: departureError } = await supabase
         .from("bookings")
         .insert([departureBooking])
         .select();
 
+      if (departureError) {
+        alert(`Departure booking failed: ${departureError.message}`);
+        return;
+      }
+
       const { data: returnData, error: returnError } = await supabase
         .from("bookings")
         .insert([returnBooking])
         .select();
 
-      if (departureError || returnError) {
-        alert(`Booking failed: ${departureError?.message || returnError?.message}`);
+      if (returnError) {
+        alert(`Return booking failed: ${returnError.message}`);
         return;
       }
 
-      // Reduce available seats for both flights after successful booking
+      // Update seat availability for both flights
       if (departureFlight!.available_seats !== undefined) {
         const newDepartureSeats = departureFlight!.available_seats - passengers.length;
-        const { error: departureSeatError } = await supabase
+        await supabase
           .from("flights")
           .update({ available_seats: newDepartureSeats })
           .eq("id", departureFlightId);
-
-        if (departureSeatError) {
-          console.error("Failed to update departure flight seat availability:", departureSeatError);
-        }
       }
 
       if (returnFlight!.available_seats !== undefined) {
         const newReturnSeats = returnFlight!.available_seats - passengers.length;
-        const { error: returnSeatError } = await supabase
+        await supabase
           .from("flights")
           .update({ available_seats: newReturnSeats })
           .eq("id", returnFlightId);
-
-        if (returnSeatError) {
-          console.error("Failed to update return flight seat availability:", returnSeatError);
-        }
       }
 
       const departureBookingId = departureData?.[0]?.id;
@@ -356,10 +356,12 @@ function RoundTripBookingContent() {
           // Don't block the booking process if email fails
         }
       }
-      
-      router.push(`/booking-success?bookingId=${departureBookingId}&roundTrip=true`);
+
+      router.push(`/booking-success?departureBookingId=${departureBookingId}&returnBookingId=${returnBookingId}&tripType=round-trip`);
     } catch {
-      alert("An unexpected error occurred. Please try again.");
+      alert("An unexpected error occurred during booking. Please try again.");
+    } finally {
+      setBookingLoading(false);
     }
   };
 
@@ -465,12 +467,13 @@ function RoundTripBookingContent() {
           <div className="text-center">
             <h1 className="text-2xl font-bold text-gray-900 mb-4">Flight Not Found</h1>
             <p className="text-gray-600 mb-6">One or both flights could not be found.</p>
-            <button
+            <LoadingButton
               onClick={() => router.push("/")}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+              variant="secondary"
+              className="mb-6"
             >
-              Back to Search
-            </button>
+              ← Back to Search
+            </LoadingButton>
           </div>
         </div>
       </>
@@ -747,17 +750,18 @@ function RoundTripBookingContent() {
                       </div>
                     ))}
 
-                    <button
-                      className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    <LoadingButton
                       onClick={() => {
                         if (validatePassengerForm()) {
                           setStep("payment");
                         }
                       }}
                       disabled={!isPassengerFormValid()}
+                      className="w-full"
+                      size="lg"
                     >
                       Continue to Payment
-                    </button>
+                    </LoadingButton>
                   </div>
                 </div>
               )}
@@ -883,19 +887,25 @@ function RoundTripBookingContent() {
                     </div>
 
                     <div className="flex space-x-4">
-                      <button
-                        className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-4 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+                      <LoadingButton
                         onClick={() => setStep("passenger")}
+                        variant="secondary"
+                        className="flex-1"
+                        size="lg"
                       >
                         Back
-                      </button>
-                      <button
-                        className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      </LoadingButton>
+                      <LoadingButton
                         onClick={handleBooking}
+                        loading={bookingLoading}
+                        loadingText="Processing Round-Trip Booking..."
                         disabled={!cardName || !cardNumber || !expiry || !cvv}
+                        variant="success"
+                        className="flex-1"
+                        size="lg"
                       >
                         Confirm & Book Round Trip
-                      </button>
+                      </LoadingButton>
                     </div>
                   </div>
                 </div>

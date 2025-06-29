@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
+import LoadingButton from "@/components/LoadingButton";
 
 interface Booking {
   id: string;
@@ -1085,26 +1086,24 @@ export default function ModifyBookingPage() {
 
               {/* Action Buttons */}
               <div className="flex space-x-4">
-                <button
-                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-4 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+                <LoadingButton
                   onClick={() => router.push("/my-bookings")}
+                  variant="secondary"
+                  className="flex-1"
+                  size="lg"
                 >
                   Cancel
-                </button>
-                <button
-                  className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                </LoadingButton>
+                <LoadingButton
                   onClick={handleSaveChanges}
-                  disabled={!isFormValid() || saving}
+                  loading={saving}
+                  loadingText="Saving Changes..."
+                  disabled={!isFormValid()}
+                  className="flex-1"
+                  size="lg"
                 >
-                  {saving ? (
-                    <span className="flex items-center justify-center">
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      Saving Changes...
-                    </span>
-                  ) : (
-                    "Save Changes"
-                  )}
-                </button>
+                  Save Changes
+                </LoadingButton>
               </div>
             </div>
           </div>

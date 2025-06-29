@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { useParams, useRouter } from "next/navigation";
 import Header from "@/components/Header";
 import { Notifications } from "@/lib/notifications";
+import LoadingButton from "@/components/LoadingButton";
 
 interface Flight {
   id: string;
@@ -36,6 +37,7 @@ export default function BookingPage() {
 
   const [flight, setFlight] = useState<Flight | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bookingLoading, setBookingLoading] = useState(false);
   const [passengers, setPassengers] = useState<Passenger[]>([
     { name: "", age: "", gender: "" }
   ]);
@@ -209,36 +211,37 @@ export default function BookingPage() {
       return;
     }
 
-    const user = (await supabase.auth.getUser()).data.user;
-    if (!user) {
-      alert("Not logged in.");
-      return;
-    }
-
-    // Check seat availability before booking
-    if (flight!.available_seats !== undefined && flight!.available_seats < passengers.length) {
-      alert(`Sorry, only ${flight!.available_seats} seats are available for this flight. Please reduce the number of passengers or choose a different flight.`);
-      return;
-    }
-
-    // Calculate total price based on number of passengers
-    const totalPrice = flight!.price * passengers.length;
-
-    const booking = {
-      user_id: user.id,
-      flight_id: flightId,
-      passengers: passengers,
-      cabin_class: flight!.cabin_class,
-      total_price: totalPrice,
-      trip_type: "one-way",
-      status: "confirmed",
-      payment_method: "card",
-      payment_status: "success",
-      transaction_id: `txn_${Date.now()}`,
-      paid_at: new Date().toISOString(),
-    };
-
+    setBookingLoading(true);
     try {
+      const user = (await supabase.auth.getUser()).data.user;
+      if (!user) {
+        alert("Not logged in.");
+        return;
+      }
+
+      // Check seat availability before booking
+      if (flight!.available_seats !== undefined && flight!.available_seats < passengers.length) {
+        alert(`Sorry, only ${flight!.available_seats} seats are available for this flight. Please reduce the number of passengers or choose a different flight.`);
+        return;
+      }
+
+      // Calculate total price based on number of passengers
+      const totalPrice = flight!.price * passengers.length;
+
+      const booking = {
+        user_id: user.id,
+        flight_id: flightId,
+        passengers: passengers,
+        cabin_class: flight!.cabin_class,
+        total_price: totalPrice,
+        trip_type: "one-way",
+        status: "confirmed",
+        payment_method: "card",
+        payment_status: "success",
+        transaction_id: `txn_${Date.now()}`,
+        paid_at: new Date().toISOString(),
+      };
+
       // Use a transaction to ensure both booking creation and seat reduction happen together
       const { data, error } = await supabase
         .from("bookings")
@@ -281,6 +284,8 @@ export default function BookingPage() {
       router.push(`/booking-success?bookingId=${bookingId}`);
     } catch {
       alert("An unexpected error occurred during booking. Please try again.");
+    } finally {
+      setBookingLoading(false);
     }
   };
 
@@ -607,17 +612,18 @@ export default function BookingPage() {
                       </div>
                     ))}
 
-                    <button
-                      className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    <LoadingButton
                       onClick={() => {
                         if (validatePassengerForm()) {
                           setStep("payment");
                         }
                       }}
                       disabled={!isPassengerFormValid()}
+                      className="w-full"
+                      size="lg"
                     >
                       Continue to Payment
-                    </button>
+                    </LoadingButton>
                   </div>
                 </div>
               )}
@@ -743,19 +749,25 @@ export default function BookingPage() {
                     </div>
 
                     <div className="flex space-x-4">
-                      <button
-                        className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-4 rounded-lg font-semibold transition-all duration-200 hover:scale-105"
+                      <LoadingButton
                         onClick={() => setStep("passenger")}
+                        variant="secondary"
+                        className="flex-1"
+                        size="lg"
                       >
                         Back
-                      </button>
-                      <button
-                        className="flex-1 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 text-white py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                      </LoadingButton>
+                      <LoadingButton
                         onClick={handleBooking}
+                        loading={bookingLoading}
+                        loadingText="Processing Booking..."
                         disabled={!cardName || !cardNumber || !expiry || !cvv}
+                        variant="success"
+                        className="flex-1"
+                        size="lg"
                       >
                         Confirm & Book Flight
-                      </button>
+                      </LoadingButton>
                     </div>
                   </div>
                 </div>

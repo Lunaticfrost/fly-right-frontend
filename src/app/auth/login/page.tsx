@@ -3,6 +3,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useState, Suspense } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import LoadingButton from '@/components/LoadingButton'
 
 interface ValidationErrors {
   email?: string;
@@ -161,20 +162,16 @@ function LoginForm() {
               )}
             </div>
 
-            <button
+            <LoadingButton
               type="submit"
-              disabled={loading || !email || !password || email.length < 3 || password.length < 6}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handleLogin}
+              loading={loading}
+              loadingText="Signing In..."
+              disabled={!email || !password || email.length < 3 || password.length < 6}
+              className="w-full"
             >
-              {loading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Signing In...
-                </div>
-              ) : (
-                'Sign In'
-              )}
-            </button>
+              Sign In
+            </LoadingButton>
           </form>
 
           {/* Divider */}

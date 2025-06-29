@@ -3,6 +3,8 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Header from "@/components/Header";
+import LoadingButton from '@/components/LoadingButton'
+import { useRouter } from "next/navigation";
 
 interface Passenger {
   name: string;
@@ -51,6 +53,7 @@ function BookingSuccessContent() {
   const [loading, setLoading] = useState(true);
   const [flightStatus, setFlightStatus] = useState('Loading...')
   const [isRoundTripBooking, setIsRoundTripBooking] = useState(false);
+  const router = useRouter();
 
   useEffect(() => {
     const fetchBooking = async () => {
@@ -640,19 +643,20 @@ function BookingSuccessContent() {
           </div>
 
           {/* Action Buttons */}
-          <div className="mt-8 flex flex-col sm:flex-row gap-4 justify-center print:hidden">
-            <button
+          <div className="mt-8 flex space-x-4">
+            <LoadingButton
               onClick={() => window.print()}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+              variant="secondary"
+              className="flex-1"
             >
               🖨️ Print Ticket
-            </button>
-            <button
-              onClick={() => (window.location.href = "/")}
-              className="bg-gray-600 hover:bg-gray-700 text-white px-8 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+            </LoadingButton>
+            <LoadingButton
+              onClick={() => router.push("/")}
+              className="flex-1"
             >
-              🔍 Search More Flights
-            </button>
+              🏠 Back to Home
+            </LoadingButton>
           </div>
         </div>
       </div>

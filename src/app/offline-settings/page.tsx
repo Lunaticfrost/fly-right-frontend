@@ -5,6 +5,7 @@ import Header from "@/components/Header";
 import OfflineIndicator from "@/components/OfflineIndicator";
 import { useOfflineData } from "@/hooks/useOfflineData";
 import { indexedDBService } from "@/lib/indexedDB";
+import LoadingButton from '@/components/LoadingButton'
 
 export default function OfflineSettingsPage() {
   const { isOnline, lastSyncTime, syncData, clearExpiredCache, getDatabaseSize } = useOfflineData();
@@ -91,8 +92,8 @@ export default function OfflineSettingsPage() {
             <h1 className="text-4xl font-bold text-gray-900 mb-4">
               Offline Settings
             </h1>
-            <p className="text-lg text-gray-600">
-              Manage your offline data and sync settings
+            <p className="text-gray-600 mb-6">
+              Configure your offline experience and manage cached data. You can control how much data is stored locally and clear cached information when needed.
             </p>
           </div>
 
@@ -197,20 +198,20 @@ export default function OfflineSettingsPage() {
               <div className="space-y-2 text-sm text-blue-800">
                 <p>• Your flight data is automatically cached for offline viewing</p>
                 <p>• Search results are cached for 1 hour to improve performance</p>
-                <p>• Bookings are synced when you're online</p>
+                <p>• Bookings are synced when you&apos;re online</p>
                 <p>• You can view your bookings even when offline</p>
                 <p>• Expired cache is automatically cleaned up</p>
               </div>
             </div>
 
             {/* Back Button */}
-            <div className="text-center">
-              <button
+            <div className="flex justify-center mt-8">
+              <LoadingButton
                 onClick={() => router.back()}
-                className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105"
+                variant="secondary"
               >
                 ← Go Back
-              </button>
+              </LoadingButton>
             </div>
           </div>
         </div>

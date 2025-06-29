@@ -1,8 +1,9 @@
 'use client'
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { supabase } from '@/lib/supabase'
+import LoadingButton from '@/components/LoadingButton'
 
 interface ValidationErrors {
   name?: string;
@@ -299,20 +300,16 @@ export default function SignUpPage() {
               )}
             </div>
 
-            <button
+            <LoadingButton
               type="submit"
+              onClick={handleSignUp}
+              loading={loading}
+              loadingText="Creating Account..."
               disabled={!isFormValid()}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full"
             >
-              {loading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Creating Account...
-                </div>
-              ) : (
-                'Create Account'
-              )}
-            </button>
+              Create Account
+            </LoadingButton>
           </form>
 
           {/* Divider */}

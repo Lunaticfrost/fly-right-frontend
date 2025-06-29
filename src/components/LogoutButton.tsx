@@ -1,21 +1,35 @@
 'use client'
+import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import LoadingButton from './LoadingButton'
 
 export default function LogoutButton() {
   const router = useRouter()
+  const [loading, setLoading] = useState(false)
 
   const handleLogout = async () => {
-    await supabase.auth.signOut()
-    router.push('/auth/login')
+    setLoading(true)
+    try {
+      await supabase.auth.signOut()
+      router.push('/auth/login')
+    } catch (error) {
+      console.error('Logout error:', error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <button
+    <LoadingButton
       onClick={handleLogout}
-      className="text-sm bg-red-500 text-white px-3 py-1 rounded hover:bg-red-600"
+      loading={loading}
+      loadingText="Logging out..."
+      variant="danger"
+      size="sm"
+      className="text-sm px-3 py-1"
     >
       Logout
-    </button>
+    </LoadingButton>
   )
 }

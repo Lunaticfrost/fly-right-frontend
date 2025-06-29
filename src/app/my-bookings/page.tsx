@@ -5,6 +5,7 @@ import Header from "@/components/Header";
 import OfflineIndicator from "@/components/OfflineIndicator";
 import { useOfflineData } from "@/hooks/useOfflineData";
 import { Booking, Flight } from "@/lib/indexedDB";
+import LoadingButton from '@/components/LoadingButton'
 
 export default function MyBookingsPage() {
   const { isOnline, getUserBookings, updateBooking } = useOfflineData();
@@ -684,12 +685,13 @@ export default function MyBookingsPage() {
                           )}
                           
                           {canCancelBooking(flight?.departure_time) ? (
-                            <button
-                              className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
+                            <LoadingButton
                               onClick={() => handleCancelGroup(group)}
+                              variant="danger"
+                              className="flex-1"
                             >
                               Cancel Booking
-                            </button>
+                            </LoadingButton>
                           ) : (
                             <button
                               className="flex-1 bg-gray-400 text-white px-4 py-3 rounded-lg font-medium cursor-not-allowed"
@@ -843,31 +845,28 @@ export default function MyBookingsPage() {
             </div>
 
             <div className="flex space-x-3">
-              <button
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200"
+              <LoadingButton
                 onClick={() => {
                   setShowCancelModal(false);
                   setSelectedBooking(null);
                   setRelatedBooking(null);
                 }}
+                variant="secondary"
                 disabled={cancelling}
+                className="flex-1"
               >
                 Keep Booking
-              </button>
-              <button
-                className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 disabled:opacity-50"
+              </LoadingButton>
+              <LoadingButton
                 onClick={handleCancelBooking}
+                loading={cancelling}
+                loadingText="Cancelling..."
                 disabled={cancelling}
+                variant="danger"
+                className="flex-1"
               >
-                {cancelling ? (
-                  <span className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                    Cancelling...
-                  </span>
-                ) : (
-                  "Yes, Cancel"
-                )}
-              </button>
+                Yes, Cancel
+              </LoadingButton>
             </div>
           </div>
         </div>
