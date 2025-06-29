@@ -169,11 +169,11 @@ export default function AdminDashboard() {
                 <tr key={booking.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">
-                      Booking #{booking.id.slice(0, 8)}
+                      Booking #{booking.id ? booking.id.slice(0, 8) : 'N/A'}
                     </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                    Flight ID: {booking.flight_id.slice(0, 8)}
+                    Flight ID: {booking.flight_id ? booking.flight_id.slice(0, 8) : 'N/A'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     ₹{booking.total_price?.toLocaleString()}
