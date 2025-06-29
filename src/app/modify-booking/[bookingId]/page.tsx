@@ -58,6 +58,11 @@ export default function ModifyBookingPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+  const [isRoundTrip, setIsRoundTrip] = useState(false);
+  const [relatedBooking, setRelatedBooking] = useState<Booking | null>(null);
+  const [relatedFlight, setRelatedFlight] = useState<Flight | null>(null);
+  const [availableReturnFlights, setAvailableReturnFlights] = useState<Flight[]>([]);
+  const [selectedReturnFlight, setSelectedReturnFlight] = useState<Flight | null>(null);
 
   useEffect(() => {
     const fetchBookingAndFlight = async () => {
@@ -71,6 +76,59 @@ export default function ModifyBookingPage() {
       if (bookingData) {
         setBooking(bookingData);
         setPassengers(bookingData.passengers || []);
+
+        // Check if this is a round-trip booking
+        if (bookingData.trip_type === 'round-trip' && bookingData.transaction_id) {
+          setIsRoundTrip(true);
+          
+          // Find the related booking (departure or return)
+          const currentTransactionId = bookingData.transaction_id;
+          const isDeparture = currentTransactionId?.includes('_dep');
+          
+          if (isDeparture) {
+            // This is departure, find return
+            const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
+            const { data: returnBookingData } = await supabase
+              .from("bookings")
+              .select("*")
+              .eq("transaction_id", returnTransactionId)
+              .single();
+            
+            if (returnBookingData) {
+              setRelatedBooking(returnBookingData);
+              
+              // Fetch return flight
+              const { data: returnFlightData } = await supabase
+                .from("flights")
+                .select("*")
+                .eq("id", returnBookingData.flight_id)
+                .single();
+              
+              setRelatedFlight(returnFlightData);
+            }
+          } else {
+            // This is return, find departure
+            const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
+            const { data: departureBookingData } = await supabase
+              .from("bookings")
+              .select("*")
+              .eq("transaction_id", departureTransactionId)
+              .single();
+            
+            if (departureBookingData) {
+              setRelatedBooking(departureBookingData);
+              
+              // Fetch departure flight
+              const { data: departureFlightData } = await supabase
+                .from("flights")
+                .select("*")
+                .eq("id", departureBookingData.flight_id)
+                .single();
+              
+              setRelatedFlight(departureFlightData);
+            }
+          }
+        }
 
         // Fetch original flight
         const { data: flightData } = await supabase
@@ -93,6 +151,23 @@ export default function ModifyBookingPage() {
           .order("departure_time", { ascending: true });
 
         setAvailableFlights(availableFlightsData || []);
+
+        // For round-trip bookings, also fetch available return flights
+        if (isRoundTrip && relatedFlight) {
+          setSelectedReturnFlight(relatedFlight);
+          
+          // Fetch available return flights (same route as return flight)
+          const { data: availableReturnFlightsData } = await supabase
+            .from("flights")
+            .select("*")
+            .eq("origin", relatedFlight.origin)
+            .eq("destination", relatedFlight.destination)
+            .neq("id", relatedFlight.id)
+            .gte("available_seats", bookingData.passengers?.length || 1)
+            .order("departure_time", { ascending: true });
+
+          setAvailableReturnFlights(availableReturnFlightsData || []);
+        }
       }
 
       setLoading(false);
@@ -161,6 +236,11 @@ export default function ModifyBookingPage() {
 
     if (!selectedFlight) return;
 
+    // Validate flight timing for round-trip bookings
+    if (!validateFlightTiming()) {
+      return;
+    }
+
     setSaving(true);
     try {
       const newTotalPrice = selectedFlight.price * passengers.length;
@@ -168,12 +248,22 @@ export default function ModifyBookingPage() {
       // Check if we're changing flights and if the new flight has enough seats
       if (selectedFlight.id !== flight!.id) {
         if (selectedFlight.available_seats !== undefined && selectedFlight.available_seats < passengers.length) {
-          alert(`Sorry, only ${selectedFlight.available_seats} seats are available for the selected flight. Please choose a different flight or reduce the number of passengers.`);
+          alert(`Sorry, only ${selectedFlight.available_seats} seats are available for the selected departure flight. Please choose a different flight or reduce the number of passengers.`);
+          setSaving(false);
+          return;
+        }
+      }
+
+      // For round-trip, check return flight seat availability
+      if (isRoundTrip && selectedReturnFlight && selectedReturnFlight.id !== relatedFlight!.id) {
+        if (selectedReturnFlight.available_seats !== undefined && selectedReturnFlight.available_seats < passengers.length) {
+          alert(`Sorry, only ${selectedReturnFlight.available_seats} seats are available for the selected return flight. Please choose a different flight or reduce the number of passengers.`);
           setSaving(false);
           return;
         }
       }
       
+      // Update the current booking
       const { error } = await supabase
         .from("bookings")
         .update({
@@ -186,6 +276,25 @@ export default function ModifyBookingPage() {
       if (error) {
         alert(`Failed to modify booking: ${error.message}`);
         return;
+      }
+
+      // If this is a round-trip booking, also update the related booking
+      if (isRoundTrip && relatedBooking && selectedReturnFlight) {
+        const newReturnTotalPrice = selectedReturnFlight.price * passengers.length;
+        
+        const { error: relatedError } = await supabase
+          .from("bookings")
+          .update({
+            flight_id: selectedReturnFlight.id,
+            total_price: newReturnTotalPrice,
+            passengers: passengers,
+          })
+          .eq("id", relatedBooking.id);
+
+        if (relatedError) {
+          console.error("Failed to update related booking:", relatedError);
+          alert("Warning: Departure flight was updated but return flight update failed. Please contact support.");
+        }
       }
 
       // Handle seat management when changing flights
@@ -207,11 +316,11 @@ export default function ModifyBookingPage() {
 
         // Reduce seats from the new flight
         if (selectedFlight.available_seats !== undefined) {
-          const newAvailableSeats = selectedFlight.available_seats - passengers.length;
+          const newSeats = selectedFlight.available_seats - passengers.length;
           
           const { error: newSeatError } = await supabase
             .from("flights")
-            .update({ available_seats: newAvailableSeats })
+            .update({ available_seats: newSeats })
             .eq("id", selectedFlight.id);
 
           if (newSeatError) {
@@ -220,7 +329,42 @@ export default function ModifyBookingPage() {
         }
       }
 
-      alert("Booking modified successfully!");
+      // Handle seat management for return flight changes
+      if (isRoundTrip && selectedReturnFlight && selectedReturnFlight.id !== relatedFlight!.id) {
+        // Restore seats to the original return flight
+        if (relatedFlight!.available_seats !== undefined) {
+          const originalPassengerCount = relatedBooking!.passengers?.length || 1;
+          const newOriginalSeats = relatedFlight!.available_seats + originalPassengerCount;
+          
+          const { error: originalSeatError } = await supabase
+            .from("flights")
+            .update({ available_seats: newOriginalSeats })
+            .eq("id", relatedFlight!.id);
+
+          if (originalSeatError) {
+            console.error("Failed to restore seats to original return flight:", originalSeatError);
+          }
+        }
+
+        // Reduce seats from the new return flight
+        if (selectedReturnFlight.available_seats !== undefined) {
+          const newSeats = selectedReturnFlight.available_seats - passengers.length;
+          
+          const { error: newSeatError } = await supabase
+            .from("flights")
+            .update({ available_seats: newSeats })
+            .eq("id", selectedReturnFlight.id);
+
+          if (newSeatError) {
+            console.error("Failed to reduce seats from new return flight:", newSeatError);
+          }
+        }
+      }
+
+      const message = isRoundTrip 
+        ? "Round-trip booking modified successfully! Both flights have been updated."
+        : "Booking modified successfully!";
+      alert(message);
       router.push("/my-bookings");
     } catch {
       alert("An unexpected error occurred while modifying the booking.");
@@ -308,6 +452,79 @@ export default function ModifyBookingPage() {
     }
   };
 
+  // Filter flights to avoid timing conflicts for round-trip bookings
+  const filterConflictingFlights = (flights: Flight[], isReturnFlight: boolean = false) => {
+    if (!isRoundTrip) return flights;
+
+    const currentDepartureFlight = isReturnFlight ? selectedFlight : flight;
+    const currentReturnFlight = isReturnFlight ? flight : selectedReturnFlight;
+
+    if (!currentDepartureFlight || !currentReturnFlight) return flights;
+
+    return flights.filter(flight => {
+      const flightDepartureTime = new Date(flight.departure_time);
+      
+      if (isReturnFlight) {
+        // For return flights, ensure they depart AFTER the departure flight arrives
+        // and have at least 1 hour gap
+        const minGap = 60 * 60 * 1000; // 1 hour in milliseconds
+        const departureArrivalTime = new Date(currentDepartureFlight.arrival_time).getTime();
+        return flightDepartureTime.getTime() > departureArrivalTime + minGap;
+      } else {
+        // For departure flights, ensure they depart BEFORE the return flight departs
+        // and have at least 1 hour gap between departure arrival and return departure
+        const minGap = 60 * 60 * 1000; // 1 hour in milliseconds
+        const returnDepartureTime = new Date(currentReturnFlight.departure_time).getTime();
+        return flightDepartureTime.getTime() < returnDepartureTime - minGap;
+      }
+    });
+  };
+
+  // Validate that selected flights don't have timing conflicts
+  const validateFlightTiming = (): boolean => {
+    if (!isRoundTrip || !selectedFlight || !selectedReturnFlight) return true;
+
+    const departureTime = new Date(selectedFlight.departure_time);
+    const returnTime = new Date(selectedReturnFlight.departure_time);
+    const minGap = 60 * 60 * 1000; // 1 hour in milliseconds
+
+    // Check if departure flight departs before return flight
+    if (departureTime.getTime() >= returnTime.getTime()) {
+      alert("Error: Departure flight must depart before return flight.");
+      return false;
+    }
+
+    // Check if there's at least 1 hour gap between departure arrival and return departure
+    const departureArrivalTime = new Date(selectedFlight.arrival_time).getTime();
+    if (returnTime.getTime() <= departureArrivalTime + minGap) {
+      alert("Error: There must be at least 1 hour gap between departure arrival and return departure.");
+      return false;
+    }
+
+    return true;
+  };
+
+  // Check if a flight has timing conflicts with the other selected flight
+  const hasTimingConflict = (flight: Flight, isReturnFlight: boolean = false): boolean => {
+    if (!isRoundTrip) return false;
+
+    const otherFlight = isReturnFlight ? selectedFlight : selectedReturnFlight;
+    if (!otherFlight) return false;
+
+    const flightDepartureTime = new Date(flight.departure_time);
+    const minGap = 60 * 60 * 1000; // 1 hour in milliseconds
+
+    if (isReturnFlight) {
+      // For return flights, check if they depart after departure flight arrives with gap
+      const departureArrivalTime = new Date(otherFlight.arrival_time).getTime();
+      return flightDepartureTime.getTime() <= departureArrivalTime + minGap;
+    } else {
+      // For departure flights, check if they depart before return flight departs with gap
+      const returnDepartureTime = new Date(otherFlight.departure_time).getTime();
+      return flightDepartureTime.getTime() >= returnDepartureTime - minGap;
+    }
+  };
+
   if (loading) {
     return (
       <>
@@ -350,11 +567,19 @@ export default function ModifyBookingPage() {
           {/* Header */}
           <div className="text-center mb-12">
             <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-4">
-              Modify Booking
+              {isRoundTrip ? 'Modify Round-Trip Booking' : 'Modify Booking'}
             </h1>
             <p className="text-xl text-gray-600">
-              Update your flight booking details
+              {isRoundTrip 
+                ? 'Update your round-trip flight booking details (passenger changes apply to both flights, both flights can be changed)'
+                : 'Update your flight booking details'
+              }
             </p>
+            {isRoundTrip && (
+              <div className="mt-4 bg-blue-100 text-blue-800 px-4 py-2 rounded-full text-sm font-medium inline-block">
+                🔄 Round-Trip: Passenger changes apply to both flights, both flights can be modified
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -406,7 +631,59 @@ export default function ModifyBookingPage() {
                     </div>
                   </div>
 
+                  {/* Round-trip return flight information */}
+                  {isRoundTrip && relatedFlight && (
+                    <div className="bg-green-50 rounded-lg p-4">
+                      <h3 className="font-bold text-lg text-gray-900 mb-2 flex items-center">
+                        <span className="mr-2">🔄</span>
+                        Return Flight
+                      </h3>
+                      <p className="text-gray-600 mb-3">
+                        {relatedFlight.airline} - {relatedFlight.flight_number}
+                      </p>
+                      <p className="text-gray-600 mb-3">
+                        {relatedFlight.origin} → {relatedFlight.destination}
+                      </p>
+
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <p className="text-gray-500">Departure</p>
+                          <p className="font-semibold text-gray-900">
+                            {formatTime(relatedFlight.departure_time)}
+                          </p>
+                          <p className="text-gray-500">
+                            {formatDate(relatedFlight.departure_time)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500">Arrival</p>
+                          <p className="font-semibold text-gray-900">
+                            {formatTime(relatedFlight.arrival_time)}
+                          </p>
+                          <p className="text-gray-500">
+                            {formatDate(relatedFlight.arrival_time)}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-3 pt-3 border-t border-green-200">
+                        <div className="flex items-center justify-center space-x-2">
+                          <span className="text-green-600">⏱️</span>
+                          <span className="text-sm font-medium text-gray-700">
+                            Duration: {calculateFlightDuration(relatedFlight.departure_time, relatedFlight.arrival_time)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-3">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Trip Type:</span>
+                      <span className="font-medium text-gray-900">
+                        {isRoundTrip ? 'Round-Trip' : 'One-Way'}
+                      </span>
+                    </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">Cabin Class:</span>
                       <span className="font-medium text-gray-900">
@@ -419,6 +696,14 @@ export default function ModifyBookingPage() {
                         ₹{booking.total_price.toLocaleString()}
                       </span>
                     </div>
+                    {isRoundTrip && relatedBooking && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Total Round-Trip Price:</span>
+                        <span className="font-medium text-gray-900">
+                          ₹{(booking.total_price + relatedBooking.total_price).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-gray-600">Passengers:</span>
                       <span className="font-medium text-gray-900">
@@ -429,13 +714,13 @@ export default function ModifyBookingPage() {
                       <>
                         <hr className="border-gray-200" />
                         <div className="flex justify-between">
-                          <span className="text-gray-600">New Price:</span>
+                          <span className="text-gray-600">New Departure Price:</span>
                           <span className="font-medium text-green-600">
                             ₹{(selectedFlight.price * passengers.length).toLocaleString()}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-600">Price Difference:</span>
+                          <span className="text-gray-600">Departure Price Difference:</span>
                           <span className={`font-medium ${
                             (selectedFlight.price * passengers.length) > booking.total_price 
                               ? 'text-red-600' 
@@ -443,6 +728,34 @@ export default function ModifyBookingPage() {
                           }`}>
                             {((selectedFlight.price * passengers.length) - booking.total_price) > 0 ? '+' : ''}
                             ₹{((selectedFlight.price * passengers.length) - booking.total_price).toLocaleString()}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {isRoundTrip && selectedReturnFlight && selectedReturnFlight.id !== relatedFlight?.id && (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">New Return Price:</span>
+                          <span className="font-medium text-green-600">
+                            ₹{(selectedReturnFlight.price * passengers.length).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Return Price Difference:</span>
+                          <span className={`font-medium ${
+                            (selectedReturnFlight.price * passengers.length) > (relatedBooking?.total_price || 0)
+                              ? 'text-red-600' 
+                              : 'text-green-600'
+                          }`}>
+                            {((selectedReturnFlight.price * passengers.length) - (relatedBooking?.total_price || 0)) > 0 ? '+' : ''}
+                            ₹{((selectedReturnFlight.price * passengers.length) - (relatedBooking?.total_price || 0)).toLocaleString()}
+                          </span>
+                        </div>
+                        <hr className="border-gray-200" />
+                        <div className="flex justify-between">
+                          <span className="text-lg font-semibold text-gray-900">New Total Round-Trip Price:</span>
+                          <span className="text-xl font-bold text-green-600">
+                            ₹{((selectedFlight?.price || flight?.price || 0) + (selectedReturnFlight?.price || relatedFlight?.price || 0)) * passengers.length}
                           </span>
                         </div>
                       </>
@@ -460,6 +773,17 @@ export default function ModifyBookingPage() {
                   <span className="mr-3">✈️</span>
                   Select New Flight
                 </h2>
+
+                {isRoundTrip && (
+                  <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <h3 className="font-semibold text-blue-800 mb-2">🕐 Round-Trip Timing Rules:</h3>
+                    <ul className="text-sm text-blue-700 space-y-1">
+                      <li>• Departure flight must depart before return flight</li>
+                      <li>• Return flight must depart at least 1 hour after departure flight arrives</li>
+                      <li>• Flights with timing conflicts are filtered out automatically</li>
+                    </ul>
+                  </div>
+                )}
 
                 <div className="space-y-4">
                   {/* Current Flight Option */}
@@ -493,7 +817,7 @@ export default function ModifyBookingPage() {
                   </div>
 
                   {/* Available Alternative Flights */}
-                  {availableFlights.map((altFlight) => (
+                  {filterConflictingFlights(availableFlights).map((altFlight) => (
                     <div 
                       key={altFlight.id}
                       className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
@@ -514,6 +838,11 @@ export default function ModifyBookingPage() {
                           <p className="text-xs text-gray-500">
                             {formatDate(altFlight.departure_time)} • {calculateFlightDuration(altFlight.departure_time, altFlight.arrival_time)}
                           </p>
+                          {hasTimingConflict(altFlight) && (
+                            <p className="text-xs text-red-600 mt-1">
+                              ⚠️ Timing conflict with return flight
+                            </p>
+                          )}
                         </div>
                         <div className="text-right">
                           <p className="font-bold text-gray-900">
@@ -525,12 +854,98 @@ export default function ModifyBookingPage() {
                     </div>
                   ))}
 
-                  {availableFlights.length === 0 && (
+                  {filterConflictingFlights(availableFlights).length === 0 && (
                     <div className="text-center py-8 bg-gray-50 rounded-lg">
                       <p className="text-gray-600">No alternative flights available for this route.</p>
                     </div>
                   )}
                 </div>
+
+                {/* Return Flight Selection for Round-Trip */}
+                {isRoundTrip && relatedFlight && (
+                  <div className="mt-8 pt-8 border-t border-gray-200">
+                    <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center">
+                      <span className="mr-2">🔄</span>
+                      Select Return Flight
+                    </h3>
+
+                    <div className="space-y-4">
+                      {/* Current Return Flight Option */}
+                      <div 
+                        className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
+                          selectedReturnFlight?.id === relatedFlight.id 
+                            ? 'border-green-500 bg-green-50' 
+                            : 'border-gray-200 hover:border-gray-300'
+                        }`}
+                        onClick={() => setSelectedReturnFlight(relatedFlight)}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <h3 className="font-semibold text-gray-900">
+                              {relatedFlight.airline} - {relatedFlight.flight_number} (Current)
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {formatTime(relatedFlight.departure_time)} - {formatTime(relatedFlight.arrival_time)}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {formatDate(relatedFlight.departure_time)} • {calculateFlightDuration(relatedFlight.departure_time, relatedFlight.arrival_time)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-bold text-gray-900">
+                              ₹{relatedFlight.price.toLocaleString()}
+                            </p>
+                            <p className="text-xs text-gray-500">per passenger</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Available Alternative Return Flights */}
+                      {filterConflictingFlights(availableReturnFlights, true).map((altFlight) => (
+                        <div 
+                          key={altFlight.id}
+                          className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
+                            selectedReturnFlight?.id === altFlight.id 
+                              ? 'border-green-500 bg-green-50' 
+                              : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          onClick={() => setSelectedReturnFlight(altFlight)}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <h3 className="font-semibold text-gray-900">
+                                {altFlight.airline} - {altFlight.flight_number}
+                              </h3>
+                              <p className="text-sm text-gray-600">
+                                {formatTime(altFlight.departure_time)} - {formatTime(altFlight.arrival_time)}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(altFlight.departure_time)} • {calculateFlightDuration(altFlight.departure_time, altFlight.arrival_time)}
+                              </p>
+                              {hasTimingConflict(altFlight, true) && (
+                                <p className="text-xs text-red-600 mt-1">
+                                  ⚠️ Timing conflict with departure flight
+                                </p>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-gray-900">
+                                ₹{altFlight.price.toLocaleString()}
+                              </p>
+                              <p className="text-xs text-gray-500">per passenger</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+
+                      {filterConflictingFlights(availableReturnFlights, true).length === 0 && (
+                        <div className="text-center py-8 bg-gray-50 rounded-lg">
+                          <p className="text-gray-600">No alternative return flights available for this route.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Passenger Information */}

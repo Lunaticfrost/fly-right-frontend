@@ -13,6 +13,7 @@ export default function MyBookingsPage() {
   const [loading, setLoading] = useState(true);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [relatedBooking, setRelatedBooking] = useState<Booking | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const router = useRouter();
 
@@ -116,21 +117,72 @@ export default function MyBookingsPage() {
     setCancelling(true);
     try {
       console.log("Cancelling booking:", selectedBooking.id);
+      console.log("Selected booking details:", {
+        id: selectedBooking.id,
+        trip_type: selectedBooking.trip_type,
+        transaction_id: selectedBooking.transaction_id,
+        status: selectedBooking.status
+      });
       
-      // Update booking status to cancelled
+      // Check if this is part of a round-trip booking
+      const isRoundTrip = selectedBooking.trip_type === 'round-trip';
+      let relatedBooking: Booking | undefined;
+      
+      if (isRoundTrip) {
+        // Find the related booking
+        const currentTransactionId = selectedBooking.transaction_id;
+        const isDeparture = currentTransactionId?.includes('_dep');
+        
+        console.log('Round-trip cancellation:', {
+          currentTransactionId,
+          isDeparture
+        });
+        
+        if (isDeparture) {
+          const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
+          relatedBooking = bookings.find(b => b.transaction_id === returnTransactionId);
+          console.log('Looking for return booking to cancel:', returnTransactionId, 'Found:', relatedBooking);
+        } else {
+          const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
+          relatedBooking = bookings.find(b => b.transaction_id === departureTransactionId);
+          console.log('Looking for departure booking to cancel:', departureTransactionId, 'Found:', relatedBooking);
+        }
+      }
+      
+      // Cancel the selected booking
       const updatedBooking = { ...selectedBooking, status: "cancelled" };
+      console.log('Cancelling selected booking:', updatedBooking);
       await updateBooking(updatedBooking);
       
-      // Update local state
-      setBookings(prev => prev.map(booking => 
-        booking.id === selectedBooking.id ? updatedBooking : booking
-      ));
+      // Cancel the related booking if it's a round-trip
+      let updatedRelatedBooking: Booking | undefined;
+      if (relatedBooking) {
+        updatedRelatedBooking = { ...relatedBooking, status: "cancelled" };
+        console.log('Cancelling related booking:', updatedRelatedBooking);
+        await updateBooking(updatedRelatedBooking);
+      }
       
-      // Restore seats to the flight after successful cancellation
+      // Update local state
+      setBookings(prev => prev.map(booking => {
+        if (booking.id === selectedBooking.id) return updatedBooking;
+        if (relatedBooking && booking.id === relatedBooking.id) return updatedRelatedBooking!;
+        return booking;
+      }));
+      
+      console.log('Local state updated');
+      
+      // Restore seats to both flights after successful cancellation
       const flight = flights[selectedBooking.flight_id];
       if (flight && flight.available_seats !== undefined) {
         const passengerCount = selectedBooking.passengers?.length || 1;
         const newAvailableSeats = flight.available_seats + passengerCount;
+        
+        console.log('Restoring seats for selected flight:', {
+          flightId: selectedBooking.flight_id,
+          currentSeats: flight.available_seats,
+          newSeats: newAvailableSeats,
+          passengerCount
+        });
         
         const { indexedDBService } = await import('@/lib/indexedDB');
         await indexedDBService.updateFlightSeats(selectedBooking.flight_id, newAvailableSeats);
@@ -145,11 +197,56 @@ export default function MyBookingsPage() {
         }));
       }
       
+      // Restore seats to related flight if it's a round-trip
+      if (relatedBooking) {
+        const relatedFlight = flights[relatedBooking.flight_id];
+        if (relatedFlight && relatedFlight.available_seats !== undefined) {
+          const passengerCount = relatedBooking.passengers?.length || 1;
+          const newAvailableSeats = relatedFlight.available_seats + passengerCount;
+          
+          console.log('Restoring seats for related flight:', {
+            flightId: relatedBooking.flight_id,
+            currentSeats: relatedFlight.available_seats,
+            newSeats: newAvailableSeats,
+            passengerCount
+          });
+          
+          const { indexedDBService } = await import('@/lib/indexedDB');
+          await indexedDBService.updateFlightSeats(relatedBooking.flight_id, newAvailableSeats);
+          
+          // Update local flight data
+          setFlights(prev => ({
+            ...prev,
+            [relatedBooking.flight_id]: {
+              ...relatedFlight,
+              available_seats: newAvailableSeats
+            }
+          }));
+        }
+      }
+      
       console.log("Booking cancelled successfully");
       
       setShowCancelModal(false);
       setSelectedBooking(null);
-      alert("Booking cancelled successfully!");
+      setRelatedBooking(null);
+      
+      // Add a small delay to ensure IndexedDB operations complete
+      setTimeout(async () => {
+        // Refresh the bookings to ensure UI updates
+        try {
+          const refreshedBookings = await getUserBookings();
+          setBookings(refreshedBookings);
+          console.log('Bookings refreshed after cancellation:', refreshedBookings.length);
+        } catch (error) {
+          console.error('Error refreshing bookings:', error);
+        }
+      }, 100);
+      
+      const message = isRoundTrip 
+        ? "Round-trip booking cancelled successfully! Both flights have been cancelled."
+        : "Booking cancelled successfully!";
+      alert(message);
     } catch (error) {
       console.error("Cancellation exception:", error);
       alert("An error occurred while cancelling the booking.");
@@ -158,11 +255,138 @@ export default function MyBookingsPage() {
     }
   };
 
-  // Open cancellation modal
-  const openCancelModal = (booking: Booking) => {
-    setSelectedBooking(booking);
+  // Handle modify booking for round-trip
+  const handleModifyBooking = (group: {
+    type: 'single' | 'round-trip';
+    departure: Booking;
+    return?: Booking;
+    totalPrice: number;
+  }) => {
+    if (group.type === 'round-trip') {
+      // For round-trip, show a message and navigate to modify the departure booking
+      // The user can modify passenger details and both flights
+      alert("Note: For round-trip bookings, passenger changes apply to both flights. You can modify both departure and return flights.");
+      router.push(`/modify-booking/${group.departure.id}`);
+    } else {
+      // For single booking, use existing logic
+      router.push(`/modify-booking/${group.departure.id}`);
+    }
+  };
+
+  // Handle cancel booking for grouped bookings
+  const handleCancelGroup = (group: {
+    type: 'single' | 'round-trip';
+    departure: Booking;
+    return?: Booking;
+    totalPrice: number;
+  }) => {
+    // For round-trip, we can cancel either booking and it will cancel both
+    // For single, just cancel the departure
+    if (group.type === 'round-trip') {
+      // Store both bookings for the modal
+      setSelectedBooking(group.departure);
+      setRelatedBooking(group.return || null);
+    } else {
+      setSelectedBooking(group.departure);
+      setRelatedBooking(null);
+    }
     setShowCancelModal(true);
   };
+
+  // Group bookings by round-trip pairs
+  const groupBookings = (bookings: Booking[]) => {
+    console.log('Grouping bookings:', bookings);
+    
+    const groupedBookings: Array<{
+      type: 'single' | 'round-trip';
+      departure: Booking;
+      return?: Booking;
+      totalPrice: number;
+    }> = [];
+
+    const processedIds = new Set<string>();
+
+    for (const booking of bookings) {
+      if (processedIds.has(booking.id)) continue;
+
+      console.log('Processing booking:', {
+        id: booking.id,
+        trip_type: booking.trip_type,
+        transaction_id: booking.transaction_id
+      });
+
+      if (booking.trip_type === 'round-trip') {
+        // Find the related booking (departure or return)
+        const currentTransactionId = booking.transaction_id;
+        const isDeparture = currentTransactionId?.includes('_dep');
+        
+        console.log('Round-trip booking found:', {
+          currentTransactionId,
+          isDeparture
+        });
+        
+        let relatedBooking: Booking | undefined;
+        
+        if (isDeparture) {
+          // This is departure, find return
+          const returnTransactionId = currentTransactionId.replace('_dep', '_ret');
+          relatedBooking = bookings.find(b => b.transaction_id === returnTransactionId);
+          console.log('Looking for return booking:', returnTransactionId, 'Found:', relatedBooking);
+        } else {
+          // This is return, find departure
+          const departureTransactionId = currentTransactionId?.replace('_ret', '_dep');
+          relatedBooking = bookings.find(b => b.transaction_id === departureTransactionId);
+          console.log('Looking for departure booking:', departureTransactionId, 'Found:', relatedBooking);
+        }
+
+        if (relatedBooking) {
+          // Group them together
+          const departure = isDeparture ? booking : relatedBooking;
+          const returnBooking = isDeparture ? relatedBooking : booking;
+          const totalPrice = departure.total_price + returnBooking.total_price;
+
+          console.log('Grouping round-trip bookings:', {
+            departure: departure.id,
+            return: returnBooking.id,
+            totalPrice
+          });
+
+          groupedBookings.push({
+            type: 'round-trip',
+            departure,
+            return: returnBooking,
+            totalPrice
+          });
+
+          processedIds.add(booking.id);
+          processedIds.add(relatedBooking.id);
+        } else {
+          // No related booking found, treat as single
+          console.log('No related booking found, treating as single');
+          groupedBookings.push({
+            type: 'single',
+            departure: booking,
+            totalPrice: booking.total_price
+          });
+          processedIds.add(booking.id);
+        }
+      } else {
+        // Single booking
+        console.log('Single booking:', booking.id);
+        groupedBookings.push({
+          type: 'single',
+          departure: booking,
+          totalPrice: booking.total_price
+        });
+        processedIds.add(booking.id);
+      }
+    }
+
+    console.log('Final grouped bookings:', groupedBookings);
+    return groupedBookings;
+  };
+
+  const groupedBookings = groupBookings(bookings);
 
   if (loading) {
     return (
@@ -219,17 +443,17 @@ export default function MyBookingsPage() {
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {bookings.map((booking) => {
-                const flight = flights[booking.flight_id];
+              {groupedBookings.map((group) => {
+                const flight = flights[group.departure.flight_id];
 
                 return (
                   <div
-                    key={booking.id}
+                    key={group.departure.id}
                     className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden"
                   >
                     {/* Booking Header */}
                     <div className={`p-6 ${
-                      booking.status === "cancelled" 
+                      group.departure.status === "cancelled" 
                         ? "bg-gradient-to-r from-red-500 to-red-600" 
                         : "bg-gradient-to-r from-green-500 to-green-600"
                     } text-white`}>
@@ -241,14 +465,19 @@ export default function MyBookingsPage() {
                           <p className="text-green-100">
                             {flight?.origin} → {flight?.destination}
                           </p>
+                          {group.type === 'round-trip' && (
+                            <p className="text-green-100 text-sm mt-1">
+                              🔄 Round Trip
+                            </p>
+                          )}
                         </div>
                         <div className="text-right">
                           <div className={`rounded-full px-3 py-1 text-sm font-medium ${
-                            booking.status === "cancelled"
+                            group.departure.status === "cancelled"
                               ? "bg-red-700 text-white"
                               : "bg-white/20 text-white"
                           }`}>
-                            {booking.status === "cancelled" ? "❌ Cancelled" : "✅ Confirmed"}
+                            {group.departure.status === "cancelled" ? "❌ Cancelled" : "✅ Confirmed"}
                           </div>
                         </div>
                       </div>
@@ -256,39 +485,96 @@ export default function MyBookingsPage() {
 
                     {/* Flight Details */}
                     <div className="p-6">
-                      <div className="grid grid-cols-2 gap-4 mb-6">
-                        <div className="text-center">
-                          <p className="text-2xl font-bold text-gray-900">
-                            {formatTime(flight?.departure_time)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {flight?.origin}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatDate(flight?.departure_time)}
-                          </p>
+                      {/* Departure Flight */}
+                      <div className="mb-6">
+                        <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                          <span className="mr-2">✈️</span>
+                          Departure Flight
+                        </h4>
+                        <div className="grid grid-cols-2 gap-4 mb-4">
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-gray-900">
+                              {formatTime(flight?.departure_time)}
+                            </p>
+                            <p className="text-sm text-gray-600">
+                              {flight?.origin}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {formatDate(flight?.departure_time)}
+                            </p>
+                          </div>
+
+                          <div className="text-center">
+                            <p className="text-2xl font-bold text-gray-900">
+                              {formatTime(flight?.arrival_time)}
+                            </p>
+                            <p className="text-sm text-gray-600">
+                              {flight?.destination}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {formatDate(flight?.arrival_time)}
+                            </p>
+                          </div>
                         </div>
 
-                        <div className="text-center">
-                          <p className="text-2xl font-bold text-gray-900">
-                            {formatTime(flight?.arrival_time)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {flight?.destination}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatDate(flight?.arrival_time)}
-                          </p>
+                        {/* Flight Duration */}
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-600">Duration:</span>
+                          <span className="font-medium text-gray-900">
+                            {calculateFlightDuration(flight?.departure_time, flight?.arrival_time)}
+                          </span>
                         </div>
                       </div>
 
-                      {/* Flight Duration */}
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Duration:</span>
-                        <span className="font-medium text-gray-900">
-                          {calculateFlightDuration(flight?.departure_time, flight?.arrival_time)}
-                        </span>
-                      </div>
+                      {/* Return Flight (for round-trip) */}
+                      {group.type === 'round-trip' && group.return && (
+                        <div className="mb-6 border-t border-gray-200 pt-6">
+                          <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                            <span className="mr-2">🔄</span>
+                            Return Flight
+                          </h4>
+                          {(() => {
+                            const returnFlight = flights[group.return.flight_id];
+                            return (
+                              <>
+                                <div className="grid grid-cols-2 gap-4 mb-4">
+                                  <div className="text-center">
+                                    <p className="text-2xl font-bold text-gray-900">
+                                      {formatTime(returnFlight?.departure_time)}
+                                    </p>
+                                    <p className="text-sm text-gray-600">
+                                      {returnFlight?.origin}
+                                    </p>
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(returnFlight?.departure_time)}
+                                    </p>
+                                  </div>
+
+                                  <div className="text-center">
+                                    <p className="text-2xl font-bold text-gray-900">
+                                      {formatTime(returnFlight?.arrival_time)}
+                                    </p>
+                                    <p className="text-sm text-gray-600">
+                                      {returnFlight?.destination}
+                                    </p>
+                                    <p className="text-xs text-gray-500">
+                                      {formatDate(returnFlight?.arrival_time)}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                {/* Flight Duration */}
+                                <div className="flex justify-between items-center">
+                                  <span className="text-gray-600">Duration:</span>
+                                  <span className="font-medium text-gray-900">
+                                    {calculateFlightDuration(returnFlight?.departure_time, returnFlight?.arrival_time)}
+                                  </span>
+                                </div>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      )}
 
                       {/* Passenger Info */}
                       <div className="bg-gray-50 rounded-lg p-4 mb-6">
@@ -297,7 +583,7 @@ export default function MyBookingsPage() {
                           Passenger Details
                         </h4>
                         <div className="space-y-3">
-                          {booking.passengers?.map((passenger, index: number) => (
+                          {group.departure.passengers?.map((passenger, index: number) => (
                             <div key={index} className="border-l-4 border-blue-200 pl-3">
                               <h5 className="font-medium text-gray-900 mb-1">
                                 Passenger {index + 1}
@@ -332,27 +618,35 @@ export default function MyBookingsPage() {
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Cabin Class:</span>
                           <span className="font-medium text-gray-900">
-                            {booking.cabin_class}
+                            {group.departure.cabin_class}
                           </span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Total Paid:</span>
                           <span className="text-xl font-bold text-green-600">
-                            ₹{booking.total_price.toLocaleString()}
+                            ₹{group.totalPrice.toLocaleString()}
                           </span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Booking ID:</span>
                           <span className="font-mono text-sm text-gray-700">
-                            {booking.id}
+                            {group.departure.id}
                           </span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-gray-600">Booked On:</span>
                           <span className="text-sm text-gray-700">
-                            {new Date(booking.booking_date).toLocaleDateString()}
+                            {new Date(group.departure.booking_date).toLocaleDateString()}
                           </span>
                         </div>
+                        {group.type === 'round-trip' && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-600">Trip Type:</span>
+                            <span className="text-sm font-medium text-blue-600">
+                              🔄 Round Trip
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions */}
@@ -361,7 +655,7 @@ export default function MyBookingsPage() {
                           className="flex-1 bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
                           onClick={() =>
                             router.push(
-                              `/booking-success?bookingId=${booking.id}`
+                              `/booking-success?bookingId=${group.departure.id}${group.type === 'round-trip' ? '&roundTrip=true' : ''}`
                             )
                           }
                         >
@@ -370,12 +664,12 @@ export default function MyBookingsPage() {
                       </div>
 
                       {/* Modify and Cancel Actions */}
-                      {booking.status === "confirmed" && (
+                      {group.departure.status === "confirmed" && (
                         <div className="flex space-x-3 mt-3">
                           {canModifyBooking(flight?.departure_time) ? (
                             <button
                               className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-                              onClick={() => router.push(`/modify-booking/${booking.id}`)}
+                              onClick={() => handleModifyBooking(group)}
                             >
                               Modify Booking
                             </button>
@@ -392,7 +686,7 @@ export default function MyBookingsPage() {
                           {canCancelBooking(flight?.departure_time) ? (
                             <button
                               className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-3 rounded-lg font-medium transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg"
-                              onClick={() => openCancelModal(booking)}
+                              onClick={() => handleCancelGroup(group)}
                             >
                               Cancel Booking
                             </button>
@@ -409,7 +703,7 @@ export default function MyBookingsPage() {
                       )}
 
                       {/* Cancelled Booking Notice */}
-                      {booking.status === "cancelled" && (
+                      {group.departure.status === "cancelled" && (
                         <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
                           <p className="text-sm text-red-800 font-medium">
                             ❌ This booking has been cancelled
@@ -444,10 +738,37 @@ export default function MyBookingsPage() {
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
               <h4 className="font-semibold text-red-800 mb-2">Booking Details:</h4>
               <div className="text-sm text-red-700 space-y-1">
-                <p><strong>Flight:</strong> {flights[selectedBooking.flight_id]?.airline} - {flights[selectedBooking.flight_id]?.flight_number}</p>
-                <p><strong>Route:</strong> {flights[selectedBooking.flight_id]?.origin} → {flights[selectedBooking.flight_id]?.destination}</p>
-                <p><strong>Date:</strong> {formatDate(flights[selectedBooking.flight_id]?.departure_time)}</p>
-                <p><strong>Amount:</strong> ₹{selectedBooking.total_price.toLocaleString()}</p>
+                {/* Departure Flight */}
+                <div className="mb-3">
+                  <p className="font-semibold text-red-800 mb-1">✈️ Departure Flight:</p>
+                  <p><strong>Flight:</strong> {flights[selectedBooking.flight_id]?.airline} - {flights[selectedBooking.flight_id]?.flight_number}</p>
+                  <p><strong>Route:</strong> {flights[selectedBooking.flight_id]?.origin} → {flights[selectedBooking.flight_id]?.destination}</p>
+                  <p><strong>Date:</strong> {formatDate(flights[selectedBooking.flight_id]?.departure_time)}</p>
+                  <p><strong>Time:</strong> {formatTime(flights[selectedBooking.flight_id]?.departure_time)} - {formatTime(flights[selectedBooking.flight_id]?.arrival_time)}</p>
+                  <p><strong>Amount:</strong> ₹{selectedBooking.total_price.toLocaleString()}</p>
+                </div>
+
+                {/* Return Flight for Round-Trip */}
+                {relatedBooking && flights[relatedBooking.flight_id] && (
+                  <div className="mb-3 pt-3 border-t border-red-200">
+                    <p className="font-semibold text-red-800 mb-1">🔄 Return Flight:</p>
+                    <p><strong>Flight:</strong> {flights[relatedBooking.flight_id]?.airline} - {flights[relatedBooking.flight_id]?.flight_number}</p>
+                    <p><strong>Route:</strong> {flights[relatedBooking.flight_id]?.origin} → {flights[relatedBooking.flight_id]?.destination}</p>
+                    <p><strong>Date:</strong> {formatDate(flights[relatedBooking.flight_id]?.departure_time)}</p>
+                    <p><strong>Time:</strong> {formatTime(flights[relatedBooking.flight_id]?.departure_time)} - {formatTime(flights[relatedBooking.flight_id]?.arrival_time)}</p>
+                    <p><strong>Amount:</strong> ₹{relatedBooking.total_price.toLocaleString()}</p>
+                  </div>
+                )}
+
+                {/* Trip Type and Total */}
+                {relatedBooking ? (
+                  <div className="pt-3 border-t border-red-200">
+                    <p><strong>Trip Type:</strong> 🔄 Round Trip (both flights will be cancelled)</p>
+                    <p><strong>Total Amount:</strong> ₹{(selectedBooking.total_price + relatedBooking.total_price).toLocaleString()}</p>
+                  </div>
+                ) : (
+                  <p><strong>Trip Type:</strong> ✈️ One-Way Flight</p>
+                )}
               </div>
             </div>
 
@@ -459,29 +780,63 @@ export default function MyBookingsPage() {
                   const refund = calculateRefund(selectedBooking.total_price, flights[selectedBooking.flight_id]?.departure_time);
                   const hoursToDeparture = (new Date(flights[selectedBooking.flight_id]?.departure_time).getTime() - new Date().getTime()) / (1000 * 60 * 60);
                   
-                  if (hoursToDeparture > 24) {
-                    return (
-                      <div>
-                        <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (90% of total)</p>
-                        <p><strong>Processing Time:</strong> 5-7 business days</p>
-                        <p className="text-xs mt-1">✓ More than 24 hours before departure</p>
-                      </div>
-                    );
-                  } else if (hoursToDeparture > 2) {
-                    return (
-                      <div>
-                        <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (50% of total)</p>
-                        <p><strong>Processing Time:</strong> 5-7 business days</p>
-                        <p className="text-xs mt-1">⚠️ Less than 24 hours before departure</p>
-                      </div>
-                    );
+                  if (relatedBooking) {
+                    // For round-trip, show combined refund
+                    const returnRefund = calculateRefund(relatedBooking.total_price, flights[relatedBooking.flight_id]?.departure_time);
+                    const totalRefund = refund + returnRefund;
+                    if (hoursToDeparture > 24) {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹{totalRefund.toLocaleString()} (90% of total for both flights)</p>
+                          <p><strong>Processing Time:</strong> 5-7 business days</p>
+                          <p className="text-xs mt-1">✓ More than 24 hours before departure</p>
+                          <p className="text-xs text-blue-600">🔄 Round-trip cancellation: Both departure and return flights will be cancelled</p>
+                        </div>
+                      );
+                    } else if (hoursToDeparture > 2) {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹{totalRefund.toLocaleString()} (50% of total for both flights)</p>
+                          <p><strong>Processing Time:</strong> 5-7 business days</p>
+                          <p className="text-xs mt-1">⚠️ Less than 24 hours before departure</p>
+                          <p className="text-xs text-blue-600">🔄 Round-trip cancellation: Both departure and return flights will be cancelled</p>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹0 (No refund available)</p>
+                          <p className="text-xs mt-1">❌ Less than 2 hours before departure</p>
+                          <p className="text-xs text-blue-600">🔄 Round-trip cancellation: Both departure and return flights will be cancelled</p>
+                        </div>
+                      );
+                    }
                   } else {
-                    return (
-                      <div>
-                        <p><strong>Refund Amount:</strong> ₹0 (No refund available)</p>
-                        <p className="text-xs mt-1">❌ Less than 2 hours before departure</p>
-                      </div>
-                    );
+                    // Single flight refund
+                    if (hoursToDeparture > 24) {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (90% of total)</p>
+                          <p><strong>Processing Time:</strong> 5-7 business days</p>
+                          <p className="text-xs mt-1">✓ More than 24 hours before departure</p>
+                        </div>
+                      );
+                    } else if (hoursToDeparture > 2) {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹{refund.toLocaleString()} (50% of total)</p>
+                          <p><strong>Processing Time:</strong> 5-7 business days</p>
+                          <p className="text-xs mt-1">⚠️ Less than 24 hours before departure</p>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <div>
+                          <p><strong>Refund Amount:</strong> ₹0 (No refund available)</p>
+                          <p className="text-xs mt-1">❌ Less than 2 hours before departure</p>
+                        </div>
+                      );
+                    }
                   }
                 })()}
               </div>
@@ -493,6 +848,7 @@ export default function MyBookingsPage() {
                 onClick={() => {
                   setShowCancelModal(false);
                   setSelectedBooking(null);
+                  setRelatedBooking(null);
                 }}
                 disabled={cancelling}
               >

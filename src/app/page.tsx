@@ -6,6 +6,7 @@ import OfflineIndicator from "@/components/OfflineIndicator";
 import { useOfflineData } from "@/hooks/useOfflineData";
 import { useFlightFilterWorker } from "@/hooks/useFlightFilterWorker";
 import { Flight } from "@/lib/indexedDB";
+import { supabase } from "@/lib/supabase";
 
 interface PassengerCount {
   adults: number;
@@ -47,6 +48,12 @@ export default function HomePage() {
 
   // Validation
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+
+  // Round-trip state
+  const [selectedDepartureFlight, setSelectedDepartureFlight] = useState<Flight | null>(null);
+  const [returnFlights, setReturnFlights] = useState<Flight[]>([]);
+  const [selectedReturnFlight, setSelectedReturnFlight] = useState<Flight | null>(null);
+  const [showReturnModal, setShowReturnModal] = useState(false);
 
   useEffect(() => {
     const fetchFlights = async () => {
@@ -169,7 +176,7 @@ export default function HomePage() {
     setCabinClassFilter("");
     setPassengerCount({ adults: 1, children: 0, infants: 0 });
     setValidationErrors({});
-    setFilteredFlights(flights);
+    resetRoundTripSelection();
   };
 
   // Update filtered flights whenever filters change
@@ -257,23 +264,55 @@ export default function HomePage() {
     }
   };
 
-  const handleFlightSelect = (flight: Flight) => {
+  const handleFlightSelect = async (flight: Flight) => {
     if (tripType === "one-way") {
       router.push(`/book/${flight.id}`);
     } else {
-      // For round-trip, store departure flight and navigate to round-trip booking
-      const searchParams = new URLSearchParams({
-        departureFlightId: flight.id,
-        origin: flight.origin,
-        destination: flight.destination,
-        departureDate: departureDateFilter,
-        returnDate: returnDateFilter,
-        adults: passengerCount.adults.toString(),
-        children: passengerCount.children.toString(),
-        infants: passengerCount.infants.toString(),
-      });
-      router.push(`/book/round-trip?${searchParams.toString()}`);
+      // For round-trip, select departure flight and fetch return flights
+      setSelectedDepartureFlight(flight);
+      
+      // Fetch return flights
+      const { data: returnData, error: returnError } = await supabase
+        .from("flights")
+        .select("*")
+        .eq("origin", flight.destination)
+        .eq("destination", flight.origin)
+        .gte("departure_time", flight.arrival_time) // Return flight should be after arrival
+        .order("departure_time", { ascending: true });
+
+      if (returnError) {
+        console.error('Error fetching return flights:', returnError);
+      } else if (returnData) {
+        setReturnFlights(returnData);
+        setShowReturnModal(true);
+      }
     }
+  };
+
+  const handleReturnFlightSelect = (flight: Flight) => {
+    setSelectedReturnFlight(flight);
+  };
+
+  const handleRoundTripBooking = () => {
+    if (!selectedDepartureFlight || !selectedReturnFlight) return;
+
+    const searchParams = new URLSearchParams({
+      departure: selectedDepartureFlight.id,
+      return: selectedReturnFlight.id,
+    });
+
+    router.push(`/book/round-trip?${searchParams.toString()}`);
+  };
+
+  const resetRoundTripSelection = () => {
+    setSelectedDepartureFlight(null);
+    setSelectedReturnFlight(null);
+    setReturnFlights([]);
+    setShowReturnModal(false);
+  };
+
+  const closeReturnModal = () => {
+    setShowReturnModal(false);
   };
 
   if (loading) {
@@ -662,11 +701,11 @@ export default function HomePage() {
                           <div className="flex items-center space-x-2">
                             <span className="text-gray-400">💺</span>
                             <span className={`text-sm font-medium ${
-                              flight.available_seats >= getTotalPassengers() 
+                              (flight.available_seats ?? 0) >= getTotalPassengers() 
                                 ? 'text-green-600' 
                                 : 'text-red-600'
                             }`}>
-                              {flight.available_seats} seats available
+                              {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
                             </span>
                           </div>
                         )}
@@ -693,6 +732,183 @@ export default function HomePage() {
               </div>
             )}
           </div>
+
+          {/* Selected Departure Flight Summary (for round-trip) */}
+          {tripType === "round-trip" && selectedDepartureFlight && (
+            <div className="mb-8">
+              <div className="bg-white rounded-2xl shadow-xl p-6">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold text-gray-900 flex items-center">
+                    <span className="mr-2">✈️</span>
+                    Selected Departure Flight
+                  </h2>
+                  <button
+                    onClick={resetRoundTripSelection}
+                    className="text-red-600 hover:text-red-700 font-medium transition-colors duration-200"
+                  >
+                    Change Selection
+                  </button>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div>
+                    <p className="text-sm text-gray-600">Flight</p>
+                    <p className="font-semibold">{selectedDepartureFlight.flight_number}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Route</p>
+                    <p className="font-semibold">{selectedDepartureFlight.origin} → {selectedDepartureFlight.destination}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Date</p>
+                    <p className="font-semibold">{formatDate(selectedDepartureFlight.departure_time)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-gray-600">Price</p>
+                    <p className="font-semibold text-green-600">₹{selectedDepartureFlight.price.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Return Flights Section (for round-trip) */}
+          {tripType === "round-trip" && showReturnModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                {/* Header */}
+                <div className="sticky top-0 bg-white border-b border-gray-200 p-6 rounded-t-2xl">
+                  <div className="flex justify-between items-center">
+                    <h2 className="text-2xl font-bold text-gray-900">
+                      Select Return Flight
+                    </h2>
+                    <button
+                      onClick={resetRoundTripSelection}
+                      className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <p className="text-gray-600 mt-2">
+                    Choose your return flight from {selectedDepartureFlight?.destination} to {selectedDepartureFlight?.origin}
+                  </p>
+                </div>
+
+                {/* Content */}
+                <div className="p-6">
+                  {returnFlights.length === 0 ? (
+                    <div className="text-center py-12">
+                      <div className="text-6xl mb-4">😔</div>
+                      <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                        No Return Flights Available
+                      </h3>
+                      <p className="text-gray-600 mb-6">
+                        No return flights found for the selected dates.
+                      </p>
+                      <button
+                        onClick={resetRoundTripSelection}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+                      >
+                        Select Different Departure
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {returnFlights.map((flight) => (
+                        <div
+                          key={flight.id}
+                          className={`border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${
+                            selectedReturnFlight?.id === flight.id
+                              ? 'border-green-500 bg-green-50'
+                              : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
+                          }`}
+                          onClick={() => handleReturnFlightSelect(flight)}
+                        >
+                          <div className="flex justify-between items-center">
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-2">
+                                <h3 className="font-semibold text-lg">
+                                  {flight.airline} - {flight.flight_number}
+                                </h3>
+                                <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-sm">
+                                  {flight.cabin_class}
+                                </span>
+                              </div>
+                              
+                              <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                                <div className="flex items-center space-x-4">
+                                  <span>{formatTime(flight.departure_time)}</span>
+                                  <span>→</span>
+                                  <span>{formatTime(flight.arrival_time)}</span>
+                                </div>
+                                <span>{calculateFlightDuration(flight.departure_time, flight.arrival_time)}</span>
+                              </div>
+                              
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-gray-500">
+                                  {formatDate(flight.departure_time)}
+                                </span>
+                                <span className={`font-medium ${
+                                  (flight.available_seats ?? 0) >= getTotalPassengers() 
+                                    ? 'text-green-600' 
+                                    : 'text-red-600'
+                                }`}>
+                                  {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
+                                </span>
+                              </div>
+                            </div>
+                            
+                            <div className="text-right ml-4">
+                              <div className="text-2xl font-bold text-green-600 mb-1">
+                                ₹{flight.price.toLocaleString()}
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                per passenger
+                              </div>
+                              {selectedReturnFlight?.id === flight.id && (
+                                <div className="bg-green-500 text-white text-xs px-2 py-1 rounded-full mt-2">
+                                  Selected
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                {returnFlights.length > 0 && (
+                  <div className="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-b-2xl">
+                    <div className="flex justify-between items-center">
+                      <div className="text-sm text-gray-600">
+                        {selectedReturnFlight ? (
+                          <span>Selected: {selectedReturnFlight.airline} - {selectedReturnFlight.flight_number}</span>
+                        ) : (
+                          <span>Please select a return flight</span>
+                        )}
+                      </div>
+                      <div className="flex space-x-3">
+                        <button
+                          onClick={resetRoundTripSelection}
+                          className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={handleRoundTripBooking}
+                          disabled={!selectedReturnFlight}
+                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-all duration-200"
+                        >
+                          Continue to Booking
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

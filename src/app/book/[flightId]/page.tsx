@@ -687,7 +687,7 @@ export default function BookingPage() {
                       )}
                     </div>
                     {/* <TestCardNumbers /> */}
-                    <span className="text-sm text-gray-500"> Test Card Number: 4532015112830366</span>
+                    <span className="text-sm text-gray-500"> Test Card Number: 5555555555554444</span>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>

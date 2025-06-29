@@ -1,14 +1,8 @@
-// Flight Filter Worker
-// This worker handles flight filtering to keep the main thread responsive
-
-// Main filtering function
 const filterFlights = (flights, criteria) => {
   return flights.filter((flight) => {
-    // Convert flight departure time to local date string (YYYY-MM-DD format)
     const flightDate = new Date(flight.departure_time);
-    const flightDateString = flightDate.toLocaleDateString('en-CA'); // en-CA gives YYYY-MM-DD format
+    const flightDateString = flightDate.toLocaleDateString('en-CA');
     
-    // Check available seats if the field exists
     const hasEnoughSeats = !flight.available_seats || flight.available_seats >= criteria.totalPassengers;
     
     // For round-trip, we need to check both departure and return flights
@@ -41,7 +35,6 @@ const filterFlights = (flights, criteria) => {
   });
 };
 
-// Listen for messages from the main thread
 self.addEventListener('message', (event) => {
   const { type, flights, criteria } = event.data;
   
