@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense } from "react";
 import { supabase } from "@/lib/supabase";
 import { useRouter, useSearchParams } from "next/navigation";
 import Header from "@/components/Header";
+import { Notifications } from "@/lib/notifications";
 
 interface Flight {
   id: string;
@@ -307,7 +308,7 @@ function RoundTripBookingContent() {
         .insert([departureBooking])
         .select();
 
-      const { error: returnError } = await supabase
+      const { data: returnData, error: returnError } = await supabase
         .from("bookings")
         .insert([returnBooking])
         .select();
@@ -343,6 +344,19 @@ function RoundTripBookingContent() {
       }
 
       const departureBookingId = departureData?.[0]?.id;
+      const returnBookingId = returnData?.[0]?.id;
+      
+      // Send round-trip booking confirmation email
+      if (departureBookingId && returnBookingId) {
+        try {
+          await Notifications.onRoundTripBookingCreated(departureBookingId, returnBookingId);
+          console.log('Round-trip booking confirmation email sent successfully');
+        } catch (emailError) {
+          console.error('Failed to send round-trip booking confirmation email:', emailError);
+          // Don't block the booking process if email fails
+        }
+      }
+      
       router.push(`/booking-success?bookingId=${departureBookingId}&roundTrip=true`);
     } catch {
       alert("An unexpected error occurred. Please try again.");

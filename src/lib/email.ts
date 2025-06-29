@@ -43,6 +43,41 @@ export interface BookingConfirmationData {
   bookingDate: string
 }
 
+export interface RoundTripBookingConfirmationData {
+  departureBookingId: string
+  returnBookingId: string
+  passengerName: string
+  passengerEmail: string
+  
+  // Departure flight details
+  departureFlightNumber: string
+  departureAirline: string
+  departureOrigin: string
+  departureDestination: string
+  departureTime: string
+  departureArrivalTime: string
+  departureCabinClass: string
+  departurePrice: number
+  
+  // Return flight details
+  returnFlightNumber: string
+  returnAirline: string
+  returnOrigin: string
+  returnDestination: string
+  returnTime: string
+  returnArrivalTime: string
+  returnCabinClass: string
+  returnPrice: number
+  
+  passengers: Array<{
+    name: string
+    age: string
+    gender: string
+  }>
+  totalPrice: number
+  bookingDate: string
+}
+
 export interface FlightUpdateData {
   bookingId: string
   passengerName: string
@@ -179,10 +214,6 @@ export const generateBookingConfirmationEmail = (data: BookingConfirmationData):
             Total: ${data.totalPrice.toFixed(2)} INR
           </div>
           
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${process.env.NEXT_PUBLIC_APP_URL}/my-bookings" class="button">View My Bookings</a>
-          </div>
-          
           <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
             <strong>Booking Details:</strong><br>
             Booking ID: ${data.bookingId}<br>
@@ -306,9 +337,6 @@ export const generateFlightUpdateEmail = (data: FlightUpdateData): EmailTemplate
               <strong>Update Time:</strong> ${formatDate(data.updateTime)} at ${formatTime(data.updateTime)}
             </div>
             
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${process.env.NEXT_PUBLIC_APP_URL}/my-bookings" class="button">View My Bookings</a>
-            </div>
           </div>
         </div>
         
@@ -413,9 +441,6 @@ export const generateReminderEmail = (data: ReminderData): EmailTemplate => {
               </ul>
             </div>
             
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${process.env.NEXT_PUBLIC_APP_URL}/my-bookings" class="button">View My Bookings</a>
-            </div>
           </div>
         </div>
         
@@ -490,6 +515,210 @@ export const sendFlightUpdate = async (data: FlightUpdateData): Promise<boolean>
 
 export const sendReminder = async (data: ReminderData): Promise<boolean> => {
   const template = generateReminderEmail(data)
+  return await sendEmail(data.passengerEmail, template)
+}
+
+export const generateRoundTripBookingConfirmationEmail = (data: RoundTripBookingConfirmationData): EmailTemplate => {
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    })
+  }
+
+  const calculateDuration = (departureTime: string, arrivalTime: string) => {
+    const departure = new Date(departureTime)
+    const arrival = new Date(arrivalTime)
+    const durationMs = arrival.getTime() - departure.getTime()
+    const durationHours = Math.floor(durationMs / (1000 * 60 * 60))
+    const durationMinutes = Math.floor((durationMs % (1000 * 60 * 60)) / (1000 * 60))
+    
+    if (durationHours > 0) {
+      return `${durationHours}h ${durationMinutes}m`
+    } else {
+      return `${durationMinutes}m`
+    }
+  }
+
+  const subject = `Round-Trip Booking Confirmed - ${data.departureAirline} ${data.departureFlightNumber} & ${data.returnAirline} ${data.returnFlightNumber}`
+
+  const html = `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Round-Trip Booking Confirmation</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 700px; margin: 0 auto; padding: 20px; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background: #f8f9fa; padding: 30px; border-radius: 0 0 10px 10px; }
+        .flight-card { background: white; border-radius: 8px; padding: 20px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .flight-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .route { font-size: 24px; font-weight: bold; color: #2c3e50; }
+        .flight-number { background: #3498db; color: white; padding: 5px 10px; border-radius: 15px; font-size: 14px; }
+        .flight-details { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+        .detail { text-align: center; }
+        .detail-label { font-size: 12px; color: #7f8c8d; text-transform: uppercase; margin-bottom: 5px; }
+        .detail-value { font-size: 18px; font-weight: bold; color: #2c3e50; }
+        .passengers { margin: 20px 0; }
+        .passenger { background: #ecf0f1; padding: 10px; margin: 5px 0; border-radius: 5px; }
+        .total { text-align: right; font-size: 20px; font-weight: bold; color: #27ae60; margin-top: 20px; }
+        .footer { text-align: center; margin-top: 30px; color: #7f8c8d; font-size: 14px; }
+        .button { display: inline-block; background: #3498db; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; margin: 10px 0; }
+        .departure-card { border-left: 4px solid #3498db; }
+        .return-card { border-left: 4px solid #e74c3c; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🎉 Round-Trip Booking Confirmed!</h1>
+          <p>Your round-trip flights have been successfully booked</p>
+        </div>
+        
+        <div class="content">
+          <!-- Departure Flight -->
+          <div class="flight-card departure-card">
+            <div class="flight-header">
+              <div class="route">✈️ Departure Flight</div>
+              <div class="flight-number">${data.departureFlightNumber}</div>
+            </div>
+            
+            <div class="flight-details">
+              <div class="detail">
+                <div class="detail-label">Departure</div>
+                <div class="detail-value">${formatTime(data.departureTime)}</div>
+                <div class="detail-label">${formatDate(data.departureTime)}</div>
+              </div>
+              <div class="detail">
+                <div class="detail-label">Arrival</div>
+                <div class="detail-value">${formatTime(data.departureArrivalTime)}</div>
+                <div class="detail-label">${formatDate(data.departureArrivalTime)}</div>
+              </div>
+            </div>
+            
+            <div style="text-align: center; margin: 20px 0; color: #7f8c8d;">
+              Duration: ${calculateDuration(data.departureTime, data.departureArrivalTime)} | ${data.departureCabinClass} Class
+            </div>
+            
+            <div style="text-align: center; margin: 10px 0;">
+              <strong>${data.departureOrigin} → ${data.departureDestination}</strong>
+            </div>
+          </div>
+
+          <!-- Return Flight -->
+          <div class="flight-card return-card">
+            <div class="flight-header">
+              <div class="route">🔄 Return Flight</div>
+              <div class="flight-number">${data.returnFlightNumber}</div>
+            </div>
+            
+            <div class="flight-details">
+              <div class="detail">
+                <div class="detail-label">Departure</div>
+                <div class="detail-value">${formatTime(data.returnTime)}</div>
+                <div class="detail-label">${formatDate(data.returnTime)}</div>
+              </div>
+              <div class="detail">
+                <div class="detail-label">Arrival</div>
+                <div class="detail-value">${formatTime(data.returnArrivalTime)}</div>
+                <div class="detail-label">${formatDate(data.returnArrivalTime)}</div>
+              </div>
+            </div>
+            
+            <div style="text-align: center; margin: 20px 0; color: #7f8c8d;">
+              Duration: ${calculateDuration(data.returnTime, data.returnArrivalTime)} | ${data.returnCabinClass} Class
+            </div>
+            
+            <div style="text-align: center; margin: 10px 0;">
+              <strong>${data.returnOrigin} → ${data.returnDestination}</strong>
+            </div>
+          </div>
+          
+          <div class="passengers">
+            <h3>Passengers (${data.passengers.length})</h3>
+            ${data.passengers.map(passenger => `
+              <div class="passenger">
+                ${passenger.name} - ${passenger.age} years old - ${passenger.gender}
+              </div>
+            `).join('')}
+          </div>
+          
+          <div class="total">
+            Total: ₹${data.totalPrice.toLocaleString()}
+          </div>
+          
+          <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; margin: 20px 0;">
+            <strong>Booking Details:</strong><br>
+            Departure Booking ID: ${data.departureBookingId}<br>
+            Return Booking ID: ${data.returnBookingId}<br>
+            Booking Date: ${formatDate(data.bookingDate)}<br>
+            Airlines: ${data.departureAirline} & ${data.returnAirline}
+          </div>
+        </div>
+        
+        <div class="footer">
+          <p>Thank you for choosing FlyRight!</p>
+          <p>If you have any questions, please contact our support team.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `
+
+  const text = `
+Round-Trip Booking Confirmed - ${data.departureAirline} ${data.departureFlightNumber} & ${data.returnAirline} ${data.returnFlightNumber}
+
+Dear ${data.passengerName},
+
+Your round-trip flight booking has been confirmed! Here are your flight details:
+
+DEPARTURE FLIGHT:
+Flight: ${data.departureAirline} ${data.departureFlightNumber}
+Route: ${data.departureOrigin} to ${data.departureDestination}
+Departure: ${formatDate(data.departureTime)} at ${formatTime(data.departureTime)}
+Arrival: ${formatDate(data.departureArrivalTime)} at ${formatTime(data.departureArrivalTime)}
+Duration: ${calculateDuration(data.departureTime, data.departureArrivalTime)}
+Class: ${data.departureCabinClass}
+
+RETURN FLIGHT:
+Flight: ${data.returnAirline} ${data.returnFlightNumber}
+Route: ${data.returnOrigin} to ${data.returnDestination}
+Departure: ${formatDate(data.returnTime)} at ${formatTime(data.returnTime)}
+Arrival: ${formatDate(data.returnArrivalTime)} at ${formatTime(data.returnArrivalTime)}
+Duration: ${calculateDuration(data.returnTime, data.returnArrivalTime)}
+Class: ${data.returnCabinClass}
+
+Passengers:
+${data.passengers.map(passenger => `- ${passenger.name} (${passenger.age} years old, ${passenger.gender})`).join('\n')}
+
+Total Amount: ₹${data.totalPrice.toLocaleString()}
+Departure Booking ID: ${data.departureBookingId}
+Return Booking ID: ${data.returnBookingId}
+Booking Date: ${formatDate(data.bookingDate)}
+
+View your bookings: ${process.env.NEXT_PUBLIC_APP_URL}/my-bookings
+
+Thank you for choosing FlyRight!
+  `
+
+  return { subject, html, text }
+}
+
+export const sendRoundTripBookingConfirmation = async (data: RoundTripBookingConfirmationData): Promise<boolean> => {
+  const template = generateRoundTripBookingConfirmationEmail(data)
   return await sendEmail(data.passengerEmail, template)
 }
 

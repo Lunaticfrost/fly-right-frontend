@@ -191,6 +191,27 @@ export class NotificationService {
       return 0
     }
   }
+
+  /**
+   * Send round-trip booking confirmation email
+   */
+  static async sendRoundTripBookingConfirmation(departureBookingId: string, returnBookingId: string): Promise<boolean> {
+    try {
+      const response = await fetch('/api/notifications/round-trip-booking-confirmation', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ departureBookingId, returnBookingId }),
+      })
+
+      const result = await response.json()
+      return result.success
+    } catch (error) {
+      console.error('Error sending round-trip booking confirmation:', error)
+      return false
+    }
+  }
 }
 
 // Utility functions for common notification patterns
@@ -233,5 +254,12 @@ export const Notifications = {
    */
   sendWeeklyReminders: async () => {
     return await NotificationService.sendReminder(7)
+  },
+
+  /**
+   * Send notification when a round-trip booking is created
+   */
+  onRoundTripBookingCreated: async (departureBookingId: string, returnBookingId: string) => {
+    return await NotificationService.sendRoundTripBookingConfirmation(departureBookingId, returnBookingId)
   },
 } 
