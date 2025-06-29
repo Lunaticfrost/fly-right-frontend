@@ -53,7 +53,7 @@ export default function HomePage() {
   const [selectedDepartureFlight, setSelectedDepartureFlight] = useState<Flight | null>(null);
   const [returnFlights, setReturnFlights] = useState<Flight[]>([]);
   const [selectedReturnFlight, setSelectedReturnFlight] = useState<Flight | null>(null);
-  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [roundTripStep, setRoundTripStep] = useState<"departure" | "return">("departure");
 
   useEffect(() => {
     const fetchFlights = async () => {
@@ -155,12 +155,31 @@ export default function HomePage() {
 
     setSearching(true);
     try {
-      const searchResults = await searchFlights(
-        originFilter,
-        destinationFilter,
-        departureDateFilter
-      );
-      setFilteredFlights(searchResults);
+      if (tripType === "round-trip") {
+        // For round-trip, only search for departure flights initially
+        const departureFlights = flights.filter((flight) => {
+          const flightDate = new Date(flight.departure_time);
+          const flightDateString = flightDate.toLocaleDateString('en-CA');
+          const hasEnoughSeats = !flight.available_seats || flight.available_seats >= getTotalPassengers();
+          
+          return (
+            flight.origin === originFilter &&
+            flight.destination === destinationFilter &&
+            (!departureDateFilter || flightDateString === departureDateFilter) &&
+            (!cabinClassFilter || flight.cabin_class === cabinClassFilter) &&
+            hasEnoughSeats
+          );
+        });
+        setFilteredFlights(departureFlights);
+      } else {
+        // For one-way, use the existing search function
+        const searchResults = await searchFlights(
+          originFilter,
+          destinationFilter,
+          departureDateFilter
+        );
+        setFilteredFlights(searchResults);
+      }
     } catch (error) {
       console.error("Error searching flights:", error);
     } finally {
@@ -184,16 +203,36 @@ export default function HomePage() {
     const applyFilters = async () => {
       setFiltering(true);
       try {
-        const filtered = await filterFlightsWithWorker(flights, {
-          originFilter,
-          destinationFilter,
-          departureDateFilter,
-          returnDateFilter,
-          tripType,
-          cabinClassFilter,
-          passengerCount,
-        });
-        setFilteredFlights(filtered);
+        // For round-trip, we need to filter differently based on the current step
+        if (tripType === "round-trip" && roundTripStep === "departure") {
+          // Only show departure flights (origin to destination)
+          const departureFlights = flights.filter((flight) => {
+            const flightDate = new Date(flight.departure_time);
+            const flightDateString = flightDate.toLocaleDateString('en-CA');
+            const hasEnoughSeats = !flight.available_seats || flight.available_seats >= getTotalPassengers();
+            
+            return (
+              flight.origin === originFilter &&
+              flight.destination === destinationFilter &&
+              (!departureDateFilter || flightDateString === departureDateFilter) &&
+              (!cabinClassFilter || flight.cabin_class === cabinClassFilter) &&
+              hasEnoughSeats
+            );
+          });
+          setFilteredFlights(departureFlights);
+        } else {
+          // Use the worker for one-way flights or return flights
+          const filtered = await filterFlightsWithWorker(flights, {
+            originFilter,
+            destinationFilter,
+            departureDateFilter,
+            returnDateFilter,
+            tripType,
+            cabinClassFilter,
+            passengerCount,
+          });
+          setFilteredFlights(filtered);
+        }
       } catch (error) {
         console.error('Error filtering flights:', error);
         // Fallback to showing all flights
@@ -214,6 +253,7 @@ export default function HomePage() {
     flights,
     passengerCount,
     filterFlightsWithWorker,
+    roundTripStep, // Add roundTripStep to dependencies
   ]);
 
   // Unique origin/destination lists
@@ -266,6 +306,7 @@ export default function HomePage() {
 
   const handleFlightSelect = async (flight: Flight) => {
     if (tripType === "one-way") {
+      // For one-way, directly navigate to booking
       router.push(`/book/${flight.id}`);
     } else {
       // For round-trip, select departure flight and fetch return flights
@@ -284,7 +325,7 @@ export default function HomePage() {
         console.error('Error fetching return flights:', returnError);
       } else if (returnData) {
         setReturnFlights(returnData);
-        setShowReturnModal(true);
+        setRoundTripStep("return");
       }
     }
   };
@@ -294,25 +335,41 @@ export default function HomePage() {
   };
 
   const handleRoundTripBooking = () => {
-    if (!selectedDepartureFlight || !selectedReturnFlight) return;
-
-    const searchParams = new URLSearchParams({
-      departure: selectedDepartureFlight.id,
-      return: selectedReturnFlight.id,
-    });
-
-    router.push(`/book/round-trip?${searchParams.toString()}`);
+    if (selectedDepartureFlight && selectedReturnFlight) {
+      // Navigate to round-trip booking page with both flight IDs
+      router.push(`/book/round-trip?departure=${selectedDepartureFlight.id}&return=${selectedReturnFlight.id}`);
+    }
   };
 
   const resetRoundTripSelection = () => {
     setSelectedDepartureFlight(null);
     setSelectedReturnFlight(null);
     setReturnFlights([]);
-    setShowReturnModal(false);
+    setRoundTripStep("departure");
+    
+    // Reset filtered flights to show only departure flights
+    if (tripType === "round-trip" && originFilter && destinationFilter) {
+      const departureFlights = flights.filter((flight) => {
+        const flightDate = new Date(flight.departure_time);
+        const flightDateString = flightDate.toLocaleDateString('en-CA');
+        const hasEnoughSeats = !flight.available_seats || flight.available_seats >= getTotalPassengers();
+        
+        return (
+          flight.origin === originFilter &&
+          flight.destination === destinationFilter &&
+          (!departureDateFilter || flightDateString === departureDateFilter) &&
+          (!cabinClassFilter || flight.cabin_class === cabinClassFilter) &&
+          hasEnoughSeats
+        );
+      });
+      setFilteredFlights(departureFlights);
+    }
   };
 
-  const closeReturnModal = () => {
-    setShowReturnModal(false);
+  const goBackToDeparture = () => {
+    setRoundTripStep("departure");
+    setSelectedReturnFlight(null);
+    setReturnFlights([]);
   };
 
   if (loading) {
@@ -616,238 +673,167 @@ export default function HomePage() {
               </div>
             </div>
 
-            {filteredFlights.length === 0 && !filtering ? (
-              <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
-                <div className="text-6xl mb-4">✈️</div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                  No flights found
-                </h3>
-                <p className="text-gray-600">
-                  Try adjusting your search criteria or check back later for new flights.
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {filteredFlights.map((flight) => (
-                  <div
-                    key={flight.id}
-                    className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden cursor-pointer transform hover:scale-105"
-                    onClick={() => handleFlightSelect(flight)}
-                  >
-                    {/* Flight Header */}
-                    <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6">
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <h3 className="text-xl font-bold mb-1">
-                            {flight.airline} - {flight.flight_number}
-                          </h3>
-                          <p className="text-blue-100">
-                            {flight.origin} → {flight.destination}
-                          </p>
+            {/* Round-trip flow: Show departure flights first, then return flights */}
+            {tripType === "round-trip" && roundTripStep === "departure" && (
+              <>
+                {/* Progress Indicator */}
+                <div className="mb-8">
+                  <div className="bg-white rounded-2xl shadow-lg p-6">
+                    <div className="flex items-center justify-center space-x-8">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-blue-600 text-white rounded-full flex items-center justify-center font-bold text-lg">
+                          1
                         </div>
-                        <div className="text-right">
-                          <div className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
-                            {flight.cabin_class}
-                          </div>
+                        <div>
+                          <p className="font-semibold text-blue-600">Select Departure</p>
+                          <p className="text-sm text-gray-500">Choose your outbound flight</p>
+                        </div>
+                      </div>
+                      <div className="flex-1 h-1 bg-gray-200 rounded-full">
+                        <div className="h-1 bg-blue-600 rounded-full w-0"></div>
+                      </div>
+                      <div className="flex items-center space-x-3 opacity-50">
+                        <div className="w-10 h-10 bg-gray-300 text-gray-500 rounded-full flex items-center justify-center font-bold text-lg">
+                          2
+                        </div>
+                        <div>
+                          <p className="font-semibold text-gray-500">Select Return</p>
+                          <p className="text-sm text-gray-400">Choose your return flight</p>
                         </div>
                       </div>
                     </div>
+                  </div>
+                </div>
 
-                    {/* Flight Details */}
-                    <div className="p-6">
-                      <div className="grid grid-cols-3 gap-4 mb-6">
-                        <div className="text-center">
-                          <p className="text-2xl font-bold text-gray-900">
-                            {formatTime(flight.departure_time)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {flight.origin}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatDate(flight.departure_time)}
-                          </p>
-                        </div>
-
-                        <div className="flex-1 mx-4">
-                          <div className="flex items-center">
-                            <div className="flex-1 h-0.5 bg-gray-300"></div>
-                            <div className="mx-2 text-gray-400">✈️</div>
-                            <div className="flex-1 h-0.5 bg-gray-300"></div>
+                {/* Search Summary */}
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-6 border border-blue-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-2xl">✈️</span>
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Departure Flight Search</h3>
+                            <p className="text-gray-600">{originFilter} → {destinationFilter}</p>
                           </div>
                         </div>
-
-                        <div className="text-center">
-                          <p className="text-2xl font-bold text-gray-900">
-                            {formatTime(flight.arrival_time)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            {flight.destination}
-                          </p>
-                          <p className="text-xs text-gray-500">
-                            {formatDate(flight.arrival_time)}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Flight Duration */}
-                      <div className="flex justify-between items-center mb-4 px-2">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-gray-400">⏱️</span>
-                          <span className="text-sm text-gray-600">
-                            {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
-                          </span>
-                        </div>
-                        {flight.available_seats !== undefined && (
+                        {departureDateFilter && (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-gray-400">📅</span>
+                            <span className="text-sm text-gray-600">{departureDateFilter}</span>
+                          </div>
+                        )}
+                        {cabinClassFilter && (
                           <div className="flex items-center space-x-2">
                             <span className="text-gray-400">💺</span>
-                            <span className={`text-sm font-medium ${
-                              (flight.available_seats ?? 0) >= getTotalPassengers() 
-                                ? 'text-green-600' 
-                                : 'text-red-600'
-                            }`}>
-                              {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
-                            </span>
+                            <span className="text-sm text-gray-600">{cabinClassFilter}</span>
                           </div>
                         )}
                       </div>
-
-                      {/* Price and Book Button */}
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="text-sm text-gray-600">Price per passenger</p>
-                          <p className="text-2xl font-bold text-green-600">
-                            ₹{flight.price.toLocaleString()}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            Total: ₹{(flight.price * getTotalPassengers()).toLocaleString()}
-                          </p>
-                        </div>
-                        <button className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg">
-                          {tripType === "one-way" ? "Book Now" : "Select"}
-                        </button>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-600">{getTotalPassengers()} passenger{getTotalPassengers() > 1 ? 's' : ''}</p>
+                        <p className="text-xs text-gray-500">Round-trip booking</p>
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Selected Departure Flight Summary (for round-trip) */}
-          {tripType === "round-trip" && selectedDepartureFlight && (
-            <div className="mb-8">
-              <div className="bg-white rounded-2xl shadow-xl p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-bold text-gray-900 flex items-center">
-                    <span className="mr-2">✈️</span>
-                    Selected Departure Flight
-                  </h2>
-                  <button
-                    onClick={resetRoundTripSelection}
-                    className="text-red-600 hover:text-red-700 font-medium transition-colors duration-200"
-                  >
-                    Change Selection
-                  </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-sm text-gray-600">Flight</p>
-                    <p className="font-semibold">{selectedDepartureFlight.flight_number}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Route</p>
-                    <p className="font-semibold">{selectedDepartureFlight.origin} → {selectedDepartureFlight.destination}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Date</p>
-                    <p className="font-semibold">{formatDate(selectedDepartureFlight.departure_time)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm text-gray-600">Price</p>
-                    <p className="font-semibold text-green-600">₹{selectedDepartureFlight.price.toLocaleString()}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Return Flights Section (for round-trip) */}
-          {tripType === "round-trip" && showReturnModal && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-                {/* Header */}
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-6 rounded-t-2xl">
-                  <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-gray-900">
-                      Select Return Flight
-                    </h2>
-                    <button
-                      onClick={resetRoundTripSelection}
-                      className="text-gray-400 hover:text-gray-600 text-2xl font-bold"
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <p className="text-gray-600 mt-2">
-                    Choose your return flight from {selectedDepartureFlight?.destination} to {selectedDepartureFlight?.origin}
-                  </p>
-                </div>
-
-                {/* Content */}
-                <div className="p-6">
-                  {returnFlights.length === 0 ? (
-                    <div className="text-center py-12">
-                      <div className="text-6xl mb-4">😔</div>
-                      <h3 className="text-xl font-semibold text-gray-900 mb-2">
-                        No Return Flights Available
-                      </h3>
-                      <p className="text-gray-600 mb-6">
-                        No return flights found for the selected dates.
-                      </p>
+                
+                {filteredFlights.length === 0 && !filtering ? (
+                  <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
+                    <div className="text-6xl mb-4">✈️</div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                      No departure flights found
+                    </h3>
+                    <p className="text-gray-600 mb-6">
+                      No flights available from {originFilter} to {destinationFilter} for the selected criteria.
+                    </p>
+                    <div className="flex justify-center space-x-4">
                       <button
-                        onClick={resetRoundTripSelection}
+                        onClick={clearFilters}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
                       >
-                        Select Different Departure
+                        Try Different Search
                       </button>
                     </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {returnFlights.map((flight) => (
-                        <div
-                          key={flight.id}
-                          className={`border-2 rounded-xl p-4 cursor-pointer transition-all duration-200 ${
-                            selectedReturnFlight?.id === flight.id
-                              ? 'border-green-500 bg-green-50'
-                              : 'border-gray-200 hover:border-green-300 hover:bg-gray-50'
-                          }`}
-                          onClick={() => handleReturnFlightSelect(flight)}
-                        >
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {filteredFlights.map((flight) => (
+                      <div
+                        key={flight.id}
+                        className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 border-transparent hover:border-blue-200 overflow-hidden cursor-pointer transform hover:scale-105"
+                        onClick={() => handleFlightSelect(flight)}
+                      >
+                        {/* Flight Header */}
+                        <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6">
                           <div className="flex justify-between items-center">
-                            <div className="flex-1">
-                              <div className="flex items-center justify-between mb-2">
-                                <h3 className="font-semibold text-lg">
-                                  {flight.airline} - {flight.flight_number}
-                                </h3>
-                                <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded text-sm">
-                                  {flight.cabin_class}
-                                </span>
+                            <div>
+                              <h3 className="text-xl font-bold mb-1">
+                                {flight.airline} - {flight.flight_number}
+                              </h3>
+                              <p className="text-blue-100">
+                                {flight.origin} → {flight.destination}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <div className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
+                                {flight.cabin_class}
                               </div>
-                              
-                              <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-                                <div className="flex items-center space-x-4">
-                                  <span>{formatTime(flight.departure_time)}</span>
-                                  <span>→</span>
-                                  <span>{formatTime(flight.arrival_time)}</span>
-                                </div>
-                                <span>{calculateFlightDuration(flight.departure_time, flight.arrival_time)}</span>
+                              <div className="mt-2 text-xs text-blue-100">
+                                Departure Flight
                               </div>
-                              
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">
-                                  {formatDate(flight.departure_time)}
-                                </span>
-                                <span className={`font-medium ${
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Flight Details */}
+                        <div className="p-6">
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.departure_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.origin}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.departure_time)}
+                              </p>
+                            </div>
+
+                            <div className="flex-1 mx-4">
+                              <div className="flex items-center">
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                                <div className="mx-2 text-gray-400">✈️</div>
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                              </div>
+                            </div>
+
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.arrival_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.destination}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.arrival_time)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Flight Duration */}
+                          <div className="flex justify-between items-center mb-4 px-2">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-gray-400">⏱️</span>
+                              <span className="text-sm text-gray-600">
+                                {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
+                              </span>
+                            </div>
+                            {flight.available_seats !== undefined && (
+                              <div className="flex items-center space-x-2">
+                                <span className="text-gray-400">💺</span>
+                                <span className={`text-sm font-medium ${
                                   (flight.available_seats ?? 0) >= getTotalPassengers() 
                                     ? 'text-green-600' 
                                     : 'text-red-600'
@@ -855,60 +841,454 @@ export default function HomePage() {
                                   {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
                                 </span>
                               </div>
-                            </div>
-                            
-                            <div className="text-right ml-4">
-                              <div className="text-2xl font-bold text-green-600 mb-1">
+                            )}
+                          </div>
+
+                          {/* Price and Select Button */}
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="text-sm text-gray-600">Price per passenger</p>
+                              <p className="text-2xl font-bold text-green-600">
                                 ₹{flight.price.toLocaleString()}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Total: ₹{(flight.price * getTotalPassengers()).toLocaleString()}
+                              </p>
+                            </div>
+                            <button className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg flex items-center space-x-2">
+                              <span>Select Departure</span>
+                              <span>→</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Round-trip flow: Show return flights after departure is selected */}
+            {tripType === "round-trip" && roundTripStep === "return" && (
+              <>
+                {/* Progress Indicator */}
+                <div className="mb-8">
+                  <div className="bg-white rounded-2xl shadow-lg p-6">
+                    <div className="flex items-center justify-center space-x-8">
+                      <div className="flex items-center space-x-3 opacity-50">
+                        <div className="w-10 h-10 bg-green-600 text-white rounded-full flex items-center justify-center font-bold text-lg">
+                          ✓
+                        </div>
+                        <div>
+                          <p className="font-semibold text-green-600">Departure Selected</p>
+                          <p className="text-sm text-gray-500">Outbound flight chosen</p>
+                        </div>
+                      </div>
+                      <div className="flex-1 h-1 bg-gray-200 rounded-full">
+                        <div className="h-1 bg-green-600 rounded-full w-full"></div>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        <div className="w-10 h-10 bg-green-600 text-white rounded-full flex items-center justify-center font-bold text-lg">
+                          2
+                        </div>
+                        <div>
+                          <p className="font-semibold text-green-600">Select Return</p>
+                          <p className="text-sm text-gray-500">Choose your return flight</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Selected Departure Flight Summary */}
+                <div className="mb-8">
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl shadow-xl p-6 border-2 border-green-200">
+                    <div className="flex justify-between items-center mb-4">
+                      <div className="flex items-center space-x-3">
+                        <div className="w-12 h-12 bg-green-600 text-white rounded-full flex items-center justify-center">
+                          <span className="text-xl">✓</span>
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-gray-900">Departure Flight Selected</h2>
+                          <p className="text-green-600 font-medium">{selectedDepartureFlight?.airline} - {selectedDepartureFlight?.flight_number}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={goBackToDeparture}
+                        className="text-blue-600 hover:text-blue-700 font-medium transition-colors duration-200 flex items-center space-x-2 bg-blue-50 hover:bg-blue-100 px-4 py-2 rounded-lg"
+                      >
+                        <span>←</span>
+                        <span>Change Departure</span>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white rounded-xl p-4">
+                      <div className="text-center">
+                        <p className="text-sm text-gray-600 mb-1">Route</p>
+                        <p className="font-semibold text-gray-900">{selectedDepartureFlight?.origin} → {selectedDepartureFlight?.destination}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm text-gray-600 mb-1">Date</p>
+                        <p className="font-semibold text-gray-900">{selectedDepartureFlight ? formatDate(selectedDepartureFlight.departure_time) : ''}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm text-gray-600 mb-1">Time</p>
+                        <p className="font-semibold text-gray-900">{selectedDepartureFlight ? formatTime(selectedDepartureFlight.departure_time) : ''}</p>
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm text-gray-600 mb-1">Price</p>
+                        <p className="font-semibold text-green-600">₹{selectedDepartureFlight?.price.toLocaleString()}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Return Flights Section */}
+                <div className="mb-6">
+                  <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-2xl">🔄</span>
+                          <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Return Flight Search</h3>
+                            <p className="text-gray-600">{selectedDepartureFlight?.destination} → {selectedDepartureFlight?.origin}</p>
+                          </div>
+                        </div>
+                        {returnDateFilter && (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-gray-400">📅</span>
+                            <span className="text-sm text-gray-600">{returnDateFilter}</span>
+                          </div>
+                        )}
+                        {cabinClassFilter && (
+                          <div className="flex items-center space-x-2">
+                            <span className="text-gray-400">💺</span>
+                            <span className="text-sm text-gray-600">{cabinClassFilter}</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-gray-600">{getTotalPassengers()} passenger{getTotalPassengers() > 1 ? 's' : ''}</p>
+                        <p className="text-xs text-gray-500">Return flight</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {returnFlights.length === 0 ? (
+                  <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
+                    <div className="text-6xl mb-4">😔</div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                      No Return Flights Available
+                    </h3>
+                    <p className="text-gray-600 mb-6">
+                      No return flights found from {selectedDepartureFlight?.destination} to {selectedDepartureFlight?.origin} for the selected dates.
+                    </p>
+                    <div className="flex justify-center space-x-4">
+                      <button
+                        onClick={goBackToDeparture}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+                      >
+                        Select Different Departure
+                      </button>
+                      <button
+                        onClick={clearFilters}
+                        className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg font-medium transition-all duration-200"
+                      >
+                        New Search
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {returnFlights.map((flight) => (
+                      <div
+                        key={flight.id}
+                        className={`bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border-2 overflow-hidden cursor-pointer transform hover:scale-105 ${
+                          selectedReturnFlight?.id === flight.id
+                            ? 'border-green-500 shadow-green-100 ring-2 ring-green-200'
+                            : 'border-gray-100 hover:border-green-300'
+                        }`}
+                        onClick={() => handleReturnFlightSelect(flight)}
+                      >
+                        {/* Flight Header */}
+                        <div className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <h3 className="text-xl font-bold mb-1">
+                                {flight.airline} - {flight.flight_number}
+                              </h3>
+                              <p className="text-green-100">
+                                {flight.origin} → {flight.destination}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <div className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
+                                {flight.cabin_class}
                               </div>
-                              <div className="text-sm text-gray-500">
-                                per passenger
+                              <div className="mt-2 text-xs text-green-100">
+                                Return Flight
                               </div>
                               {selectedReturnFlight?.id === flight.id && (
-                                <div className="bg-green-500 text-white text-xs px-2 py-1 rounded-full mt-2">
-                                  Selected
+                                <div className="bg-white text-green-600 text-xs px-2 py-1 rounded-full mt-2 font-medium">
+                                  ✓ Selected
                                 </div>
                               )}
                             </div>
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
 
-                {/* Footer */}
-                {returnFlights.length > 0 && (
-                  <div className="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-b-2xl">
-                    <div className="flex justify-between items-center">
-                      <div className="text-sm text-gray-600">
-                        {selectedReturnFlight ? (
-                          <span>Selected: {selectedReturnFlight.airline} - {selectedReturnFlight.flight_number}</span>
-                        ) : (
-                          <span>Please select a return flight</span>
-                        )}
+                        {/* Flight Details */}
+                        <div className="p-6">
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.departure_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.origin}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.departure_time)}
+                              </p>
+                            </div>
+
+                            <div className="flex-1 mx-4">
+                              <div className="flex items-center">
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                                <div className="mx-2 text-gray-400">✈️</div>
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                              </div>
+                            </div>
+
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.arrival_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.destination}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.arrival_time)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Flight Duration */}
+                          <div className="flex justify-between items-center mb-4 px-2">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-gray-400">⏱️</span>
+                              <span className="text-sm text-gray-600">
+                                {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
+                              </span>
+                            </div>
+                            {flight.available_seats !== undefined && (
+                              <div className="flex items-center space-x-2">
+                                <span className="text-gray-400">💺</span>
+                                <span className={`text-sm font-medium ${
+                                  (flight.available_seats ?? 0) >= getTotalPassengers() 
+                                    ? 'text-green-600' 
+                                    : 'text-red-600'
+                                }`}>
+                                  {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Price and Select Button */}
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="text-sm text-gray-600">Price per passenger</p>
+                              <p className="text-2xl font-bold text-green-600">
+                                ₹{flight.price.toLocaleString()}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Total: ₹{(flight.price * getTotalPassengers()).toLocaleString()}
+                              </p>
+                            </div>
+                            <button className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg flex items-center space-x-2 ${
+                              selectedReturnFlight?.id === flight.id
+                                ? 'bg-green-600 hover:bg-green-700 text-white'
+                                : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                            }`}>
+                              <span>{selectedReturnFlight?.id === flight.id ? 'Selected' : 'Select Return'}</span>
+                              {selectedReturnFlight?.id === flight.id && <span>✓</span>}
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex space-x-3">
-                        <button
-                          onClick={resetRoundTripSelection}
-                          className="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Round-trip Booking Button */}
+                {selectedReturnFlight && (
+                  <div className="mt-8">
+                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl shadow-xl p-8 border-2 border-green-200">
+                      <div className="text-center mb-6">
+                        <h3 className="text-2xl font-bold text-gray-900 mb-2">🎉 Round-trip Complete!</h3>
+                        <p className="text-gray-600">Both flights selected successfully</p>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                        <div className="bg-white rounded-xl p-4 text-center">
+                          <p className="text-sm text-gray-600 mb-1">Departure</p>
+                          <p className="font-semibold text-gray-900">{selectedDepartureFlight?.origin} → {selectedDepartureFlight?.destination}</p>
+                          <p className="text-sm text-gray-500">{selectedDepartureFlight ? formatDate(selectedDepartureFlight.departure_time) : ''}</p>
+                          <p className="text-green-600 font-semibold">₹{(selectedDepartureFlight?.price || 0) * getTotalPassengers()}</p>
+                        </div>
+                        <div className="bg-white rounded-xl p-4 text-center">
+                          <p className="text-sm text-gray-600 mb-1">Return</p>
+                          <p className="font-semibold text-gray-900">{selectedReturnFlight?.origin} → {selectedReturnFlight?.destination}</p>
+                          <p className="text-sm text-gray-500">{formatDate(selectedReturnFlight.departure_time)}</p>
+                          <p className="text-green-600 font-semibold">₹{(selectedReturnFlight?.price || 0) * getTotalPassengers()}</p>
+                        </div>
+                        <div className="bg-white rounded-xl p-4 text-center">
+                          <p className="text-sm text-gray-600 mb-1">Total</p>
+                          <p className="text-2xl font-bold text-green-600">
+                            ₹{((selectedDepartureFlight?.price || 0) + (selectedReturnFlight?.price || 0)) * getTotalPassengers()}
+                          </p>
+                          <p className="text-xs text-gray-500">for {getTotalPassengers()} passenger{getTotalPassengers() > 1 ? 's' : ''}</p>
+                        </div>
+                      </div>
+                      
+                      <div className="text-center">
                         <button
                           onClick={handleRoundTripBooking}
-                          disabled={!selectedReturnFlight}
-                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-medium transition-all duration-200"
+                          className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-8 py-4 rounded-lg font-semibold text-lg transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg flex items-center justify-center space-x-2 mx-auto"
                         >
-                          Continue to Booking
+                          <span>🚀 Continue to Booking</span>
+                          <span>→</span>
                         </button>
                       </div>
                     </div>
                   </div>
                 )}
-              </div>
-            </div>
-          )}
+              </>
+            )}
+
+            {/* One-way flow: Show all flights normally */}
+            {tripType === "one-way" && (
+              <>
+                {filteredFlights.length === 0 && !filtering ? (
+                  <div className="text-center py-12 bg-white rounded-2xl shadow-lg">
+                    <div className="text-6xl mb-4">✈️</div>
+                    <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                      No flights found
+                    </h3>
+                    <p className="text-gray-600">
+                      Try adjusting your search criteria or check back later for new flights.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {filteredFlights.map((flight) => (
+                      <div
+                        key={flight.id}
+                        className="bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 overflow-hidden cursor-pointer transform hover:scale-105"
+                        onClick={() => handleFlightSelect(flight)}
+                      >
+                        {/* Flight Header */}
+                        <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6">
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <h3 className="text-xl font-bold mb-1">
+                                {flight.airline} - {flight.flight_number}
+                              </h3>
+                              <p className="text-blue-100">
+                                {flight.origin} → {flight.destination}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <div className="bg-white/20 text-white text-xs font-medium px-2 py-1 rounded-full">
+                                {flight.cabin_class}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Flight Details */}
+                        <div className="p-6">
+                          <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.departure_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.origin}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.departure_time)}
+                              </p>
+                            </div>
+
+                            <div className="flex-1 mx-4">
+                              <div className="flex items-center">
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                                <div className="mx-2 text-gray-400">✈️</div>
+                                <div className="flex-1 h-0.5 bg-gray-300"></div>
+                              </div>
+                            </div>
+
+                            <div className="text-center">
+                              <p className="text-2xl font-bold text-gray-900">
+                                {formatTime(flight.arrival_time)}
+                              </p>
+                              <p className="text-sm text-gray-600">
+                                {flight.destination}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                {formatDate(flight.arrival_time)}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Flight Duration */}
+                          <div className="flex justify-between items-center mb-4 px-2">
+                            <div className="flex items-center space-x-2">
+                              <span className="text-gray-400">⏱️</span>
+                              <span className="text-sm text-gray-600">
+                                {calculateFlightDuration(flight.departure_time, flight.arrival_time)}
+                              </span>
+                            </div>
+                            {flight.available_seats !== undefined && (
+                              <div className="flex items-center space-x-2">
+                                <span className="text-gray-400">💺</span>
+                                <span className={`text-sm font-medium ${
+                                  (flight.available_seats ?? 0) >= getTotalPassengers() 
+                                    ? 'text-green-600' 
+                                    : 'text-red-600'
+                                }`}>
+                                  {(flight.available_seats ?? 0) > 0 ? (flight.available_seats ?? 0) : 'No seats available'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Price and Book Button */}
+                          <div className="flex justify-between items-center">
+                            <div>
+                              <p className="text-sm text-gray-600">Price per passenger</p>
+                              <p className="text-2xl font-bold text-green-600">
+                                ₹{flight.price.toLocaleString()}
+                              </p>
+                              <p className="text-sm text-gray-500">
+                                Total: ₹{(flight.price * getTotalPassengers()).toLocaleString()}
+                              </p>
+                            </div>
+                            <button className="bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white px-6 py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg">
+                              Book Now
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
     </>
