@@ -163,7 +163,7 @@ function LoginForm() {
 
             <button
               type="submit"
-              disabled={loading || Object.keys(validationErrors).length > 0}
+              disabled={loading || !email || !password || email.length < 3 || password.length < 6}
               className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white py-3 rounded-lg font-semibold transition-all duration-200 hover:scale-105 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
