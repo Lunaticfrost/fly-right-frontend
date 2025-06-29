@@ -176,7 +176,7 @@ export const generateBookingConfirmationEmail = (data: BookingConfirmationData):
           </div>
           
           <div class="total">
-            Total: $${data.totalPrice.toFixed(2)}
+            Total: ${data.totalPrice.toFixed(2)} INR
           </div>
           
           <div style="text-align: center; margin: 30px 0;">
@@ -217,7 +217,7 @@ Class: ${data.cabinClass}
 Passengers:
 ${data.passengers.map(passenger => `- ${passenger.name} (${passenger.age} years old, ${passenger.gender})`).join('\n')}
 
-Total Amount: $${data.totalPrice.toFixed(2)}
+Total Amount: ${data.totalPrice.toFixed(2)} INR
 Booking ID: ${data.bookingId}
 Booking Date: ${formatDate(data.bookingDate)}
 
